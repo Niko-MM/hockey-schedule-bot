@@ -57,3 +57,23 @@ def get_weekday_short(date_obj: date) -> str:
     """
     weekdays = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
     return weekdays[date_obj.weekday()]  # weekday(): 0=пн, 6=вс
+
+
+WEEKDAY_FULL = (
+    "Понедельник", "Вторник", "Среда", "Четверг",
+    "Пятница", "Суббота", "Воскресенье"
+)
+MONTH_GENITIVE = (
+    "января", "февраля", "марта", "апреля", "мая", "июня",
+    "июля", "августа", "сентября", "октября", "ноября", "декабря"
+)
+
+
+def get_weekday_full(date_obj: date) -> str:
+    """Полное название дня недели (Суббота, Воскресенье, ...)."""
+    return WEEKDAY_FULL[date_obj.weekday()]
+
+
+def get_date_day_month(date_obj: date) -> str:
+    """Дата в формате «1 марта» (день без нуля + месяц в родительном падеже)."""
+    return f"{date_obj.day} {MONTH_GENITIVE[date_obj.month - 1]}"

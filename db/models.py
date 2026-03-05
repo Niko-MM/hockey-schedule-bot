@@ -1,7 +1,7 @@
 from db.session import Base
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import ForeignKey
-from datetime import date as Date
+from sqlalchemy import ForeignKey, DateTime, Date as SaDate
+from datetime import date as Date, datetime
 
 
 class Person(Base):
@@ -9,16 +9,12 @@ class Person(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     telegram_id: Mapped[int] = mapped_column(unique=True, nullable=False)
+    username: Mapped[str | None] = mapped_column(nullable=True)  # Telegram username (без @)
     surname: Mapped[str] = mapped_column(nullable=False)
     name: Mapped[str] = mapped_column(nullable=False)
     is_active: Mapped[bool] = mapped_column(default=False)
     is_banned: Mapped[bool] = mapped_column(default=False)
     is_available: Mapped[bool] = mapped_column(default=True)
-
-    #team
-    team_number: Mapped[int] = mapped_column(default=1)
-    is_captain: Mapped[bool] = mapped_column(default=False)
-    player_order: Mapped[int] = mapped_column(default=0) 
 
     # Role
     is_player: Mapped[bool] = mapped_column(default=False)
@@ -46,6 +42,11 @@ class Tour(Base):
     time: Mapped[str] = mapped_column(nullable=False)
     games: Mapped[int] = mapped_column(nullable=False)
     date_tour_id: Mapped[int] = mapped_column(ForeignKey("date_tours.id"))
+    teams_count: Mapped[int] = mapped_column(nullable=False, default=2)
+
+    team_1_composition: Mapped[str | None] = mapped_column(nullable=True)
+    team_2_composition: Mapped[str | None] = mapped_column(nullable=True)
+    team_3_composition: Mapped[str | None] = mapped_column(nullable=True)
 
 
 class PlayerTourStats(Base):
@@ -64,10 +65,18 @@ class WorkerSchedule(Base):
     date_tour_id: Mapped[int] = mapped_column(ForeignKey("date_tours.id"))
     match_number: Mapped[int] = mapped_column(nullable=False)  # 1..27
     time_slot: Mapped[str] = mapped_column(nullable=False)     # "05:00-05:40"
-    
+
     # Separate columns for each role
     operator_id: Mapped[int] = mapped_column(ForeignKey("person.id"))
     director_id: Mapped[int] = mapped_column(ForeignKey("person.id"))
     k_center_id: Mapped[int] = mapped_column(ForeignKey("person.id"))
     commentator_id: Mapped[int] = mapped_column(ForeignKey("person.id"))
     referee_id: Mapped[int] = mapped_column(ForeignKey("person.id"))
+
+
+class SalaryPeriodClosed(Base):
+    """Закрытый период зарплаты: после «Расчёт» админом долг за этот период не показывается."""
+    __tablename__ = "salary_period_closed"
+
+    period_start: Mapped[Date] = mapped_column(SaDate(), primary_key=True)
+    closed_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)

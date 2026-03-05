@@ -1,3 +1,5 @@
+import asyncio
+
 from aiogram import Router, F, Bot
 from aiogram.types import CallbackQuery, Message
 from db.crud import (
@@ -13,6 +15,7 @@ from bot.keyboards.admin.approval import (
 from db.crud import approve_person
 from bot.config import bot_settings
 from bot.keyboards.user.main import get_user_keyboard
+from bot.keyboards.user.wallpaper import get_wallpaper_offer_keyboard
 
 
 ROLE_TEXT = {
@@ -24,6 +27,25 @@ ROLE_TEXT = {
 
 
 router = Router(name="admin_approval")
+
+# Track users who already got menu after wallpaper offer (avoid duplicate)
+_menu_sent_after_wallpaper: set[int] = set()
+
+
+async def _send_menu_after_delay(bot: Bot, tg_id: int, delay: float = 3.0) -> None:
+    """Send main menu after delay; skip if already sent (e.g. user clicked Skip)."""
+    await asyncio.sleep(delay)
+    if tg_id in _menu_sent_after_wallpaper:
+        return
+    try:
+        await bot.send_message(
+            chat_id=tg_id,
+            text="👇 Выберите действие:",
+            reply_markup=get_user_keyboard(),
+        )
+        _menu_sent_after_wallpaper.add(tg_id)
+    except Exception:
+        pass
 
 
 def is_admin(user_id: int) -> bool:
@@ -163,7 +185,7 @@ async def handle_save(callback: CallbackQuery, bot: Bot):
             await callback.answer("❌ Ошибка добавления второй роли", show_alert=True)
             return
 
-    # Отправляем приветствие С КЛАВИАТУРОЙ сразу после подтверждения
+    # Send only welcome + wallpaper offer; menu comes on Skip or after delay
     try:
         role1_text = ROLE_TEXT.get(role1, role1)
         if role2:
@@ -171,12 +193,20 @@ async def handle_save(callback: CallbackQuery, bot: Bot):
             roles_text = f"{role1_text}, {role2_text}"
         else:
             roles_text = role1_text
-        
+
+        welcome_text = (
+            f"✅ Добро пожаловать, {person.name}!\n"
+            f"Ваша роль: {roles_text}\n\n"
+            "Установить фон чата с ботом?\n\n"
+            "💡 Чтобы оставить фон только здесь: примени его, а затем верни свои старые обои "
+            "в любой другой переписке.В боте всё останется."
+        )
         await bot.send_message(
             chat_id=tg_id,
-            text=f"✅ Добро пожаловать, {person.name}!\nВаша роль: {roles_text}",
-            reply_markup=get_user_keyboard()
+            text=welcome_text,
+            reply_markup=get_wallpaper_offer_keyboard(),
         )
+        asyncio.create_task(_send_menu_after_delay(bot, tg_id))
     except Exception:
         pass
 
@@ -192,6 +222,34 @@ async def handle_save(callback: CallbackQuery, bot: Bot):
         await callback.message.edit_text(text)
 
     await callback.answer("✅ Сохранено")
+
+
+@router.callback_query(F.data == "skip_wallpaper")
+async def handle_skip_wallpaper(callback: CallbackQuery, bot: Bot):
+    """User skipped wallpaper — send menu and remove offer buttons."""
+    if not callback.from_user:
+        await callback.answer()
+        return
+    tg_id = callback.from_user.id
+
+    if callback.message and isinstance(callback.message, Message):
+        try:
+            await callback.message.edit_text(
+                "Фон чата можно установить позже через меню.",
+            )
+        except Exception:
+            pass
+
+    try:
+        await bot.send_message(
+            chat_id=tg_id,
+            text="👇 Выберите действие:",
+            reply_markup=get_user_keyboard(),
+        )
+        _menu_sent_after_wallpaper.add(tg_id)
+    except Exception:
+        pass
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("reject:"))

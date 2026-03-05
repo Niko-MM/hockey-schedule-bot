@@ -1,0 +1,5 @@
+# Hockey Salary Bot
+aiogram>=3.24
+aiosqlite>=0.22
+pydantic-settings>=2.12
+SQLAlchemy>=2.0

@@ -1,28 +1,36 @@
-from aiogram import Router, F
+from aiogram import Bot, Router, F
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery
 from bot.states.schedule import ScheduleCreation
 from bot.config import bot_settings
+from bot.services.schedule_notifications import (
+    build_player_schedule_message,
+    notify_players_schedule_changed,
+    send_full_schedule_to_players,
+)
 from db.crud import (
     create_tournament_day,
-    get_tours_count,
-    get_date_tour_by_id,
     get_date_tour_by_date,
-    get_available_players,
-    get_reserve_players,
+    get_tours_by_date_tour_id,
+    save_schedule_to_db,
+    update_tour as update_tour_db,
 )
-from bot.keyboards.admin.players_select import get_single_player_select_keyboard
+from bot.utils.composition_parser import validate_team_composition, build_composition_error_message
 from bot.keyboards.admin.schedule import (
-    get_schedule_keyboard,
-    get_teams_complete_keyboard,
+    get_add_team_3_keyboard,
+    get_final_confirm_keyboard,
+    get_team3_confirm_keyboard,
+    get_edit_team_select_keyboard, 
+    get_tour_list_keyboard,
+    get_edit_tour_menu_keyboard,
 )
-from bot.keyboards.admin.slot_actions import get_slot_actions_keyboard
 from bot.utils.date_parser import (
     parse_date_ddmmyy,
     get_weekday_short,
     normalize_time_hhmm,
+    get_weekday_full,
+    get_date_day_month,
 )
-from aiogram.types import CallbackQuery
 from datetime import date
 
 
@@ -31,7 +39,7 @@ router = Router(name="admin_schedule")
 
 @router.message(F.text == "➕ Составить расписание")
 async def start_schedule_creation(msg: Message, state: FSMContext):
-    """Старт создания расписания: запросить дату турнира"""
+    """Start schedule creation: ask for tournament date"""
     if not msg.from_user:
         return
 
@@ -42,13 +50,13 @@ async def start_schedule_creation(msg: Message, state: FSMContext):
     await state.set_state(ScheduleCreation.waiting_for_date)
     await msg.answer(
         "📅 Создание расписания.\n"
-        "Введите дату турнира в формате ДД.ММ.ГГ"
+        "Введите дату в формате ДД.ММ.ГГ"
     )
 
 
 @router.message(ScheduleCreation.waiting_for_date)
 async def process_date(msg: Message, state: FSMContext):
-    """Parse date — allow any date, warn for past dates"""
+    """Parse date — block past dates, proceed to time input"""
     if not msg.text:
         await msg.answer("❌ Введите дату в формате ДД.ММ.ГГ")
         return
@@ -60,15 +68,7 @@ async def process_date(msg: Message, state: FSMContext):
         )
         return
 
-    today = date.today()
-
-    # Soft warning for past dates (no blocking)
-    if parsed_date < today:
-        await msg.answer(
-            f"⚠️ Внимание: вы создаёте расписание на ПРОШЕДШИЙ день ({parsed_date:%d.%m.%Y}).\n"
-            f"Сегодня: {today:%d.%m.%Y}"
-        )
-
+    # Allow past dates for testing (restriction was: parsed_date < today)
     # Get existing day or create new one
     existing_date_tour = await get_date_tour_by_date(parsed_date)
     if existing_date_tour:
@@ -80,64 +80,23 @@ async def process_date(msg: Message, state: FSMContext):
             await msg.answer(f"❌ {e}")
             return
 
-    await state.update_data(date_tour_id=date_tour.id)
-    await state.set_state(None)
-
-    weekday = get_weekday_short(parsed_date)
-    await msg.answer(
-        f"📅 {weekday}, {parsed_date:%d.%m.%Y}\n\nВыберите действие:",
-        reply_markup=get_schedule_keyboard(date_tour.id),
-    )
-
-
-@router.callback_query(F.data.startswith("add_tour:"))
-async def handle_add_tour(callback: CallbackQuery, state: FSMContext):
-    """Start adding a new tour (shift) to schedule with progress display"""
-    if not callback.message:
-        await callback.answer()
-        return
-
-    if not callback.data:
-        await callback.answer()
-        return
-
-    if not callback.from_user or callback.from_user.id != bot_settings.admin_players:
-        await callback.answer("🚫 Нет прав", show_alert=True)
-        return
-
-    try:
-        date_tour_id = int(callback.data.split(":")[1])
-    except (IndexError, ValueError):
-        await callback.answer("❌ Ошибка данных", show_alert=True)
-        return
-
-    date_tour = await get_date_tour_by_id(date_tour_id)
-    if not date_tour:
-        await callback.answer("❌ Турнирный день не найден", show_alert=True)
-        return
-
-    tour_number = await get_tours_count(date_tour_id) + 1
-    weekday = get_weekday_short(date_tour.date)
-
     await state.update_data(
-        date_tour_id=date_tour_id,
-        tour_number=tour_number,
-        schedule_date=date_tour.date.isoformat(),
+        date_tour_id=date_tour.id,
+        schedule_date=parsed_date.isoformat()
     )
     await state.set_state(ScheduleCreation.waiting_for_time)
 
-    await callback.message.answer(
-        f"📅 {weekday}, {date_tour.date:%d.%m.%Y}\n"
-        f"🔢 Тур #{tour_number}\n\n"
+    weekday = get_weekday_short(parsed_date)
+    await msg.answer(
+        f"✅ Дата расписания: {weekday}, {parsed_date:%d.%m.%Y}\n\n"
         "⏰ Введите время тура (ЧЧ:ММ)\n"
-        "Пример: 05:00"
+        "Пример: 08:30"
     )
-    await callback.answer()
 
 
 @router.message(ScheduleCreation.waiting_for_time)
 async def process_time(msg: Message, state: FSMContext):
-    """Validate and normalize tour time, proceed to games count with progress display"""
+    """Validate and normalize tour time"""
     if not msg.text:
         await msg.answer("❌ Введите время в формате ЧЧ:ММ")
         return
@@ -151,17 +110,10 @@ async def process_time(msg: Message, state: FSMContext):
         return
 
     data = await state.get_data()
-    date_tour_id = data.get("date_tour_id")
-    tour_number = data.get("tour_number", 1)
     schedule_date = data.get("schedule_date")
 
-    if not date_tour_id or not schedule_date:
+    if not schedule_date:
         await msg.answer("❌ Ошибка состояния. Начните заново.")
-        await state.clear()
-        return
-
-    if not isinstance(schedule_date, str):
-        await msg.answer("❌ Ошибка данных даты. Начните заново.")
         await state.clear()
         return
 
@@ -173,7 +125,6 @@ async def process_time(msg: Message, state: FSMContext):
 
     await msg.answer(
         f"📅 {weekday}, {tour_date:%d.%m.%Y}\n"
-        f"🔢 Тур #{tour_number}\n"
         f"⏰ Время: {normalized_time}\n\n"
         "🎮 Введите количество игр в туре"
     )
@@ -181,7 +132,7 @@ async def process_time(msg: Message, state: FSMContext):
 
 @router.message(ScheduleCreation.waiting_for_games)
 async def process_games(msg: Message, state: FSMContext):
-    """Validate games count (1-20) and proceed to teams count"""
+    """Validate games count (1-20)"""
     if not msg.text:
         await msg.answer("❌ Введите количество игр (число от 1 до 20)")
         return
@@ -192,622 +143,1007 @@ async def process_games(msg: Message, state: FSMContext):
             raise ValueError
     except ValueError:
         await msg.answer(
-            "❌ Неверное количество игр.\nВведите число от 1 до 20 (например: 5)"
+            "❌ Неверное количество игр.\n"
+            "Введите число от 1 до 20 (например: 5)"
         )
         return
 
+    await state.update_data(games_count=games_count)
+    await state.set_state(ScheduleCreation.waiting_for_team_1_composition)
+
     data = await state.get_data()
-    date_tour_id = data.get("date_tour_id")
-    tour_number = data.get("tour_number", 1)
     schedule_date = data.get("schedule_date")
     tour_time = data.get("tour_time")
 
-    if not all([date_tour_id, schedule_date, tour_time]):
+    if not schedule_date or not tour_time:
         await msg.answer("❌ Ошибка состояния. Начните заново.")
-        await state.clear()
-        return
-
-    if not isinstance(schedule_date, str):
-        await msg.answer("❌ Ошибка данных даты. Начните заново.")
         await state.clear()
         return
 
     tour_date = date.fromisoformat(schedule_date)
     weekday = get_weekday_short(tour_date)
 
-    await state.update_data(games_count=games_count)
-    await state.set_state(ScheduleCreation.waiting_for_teams)
-
     await msg.answer(
-        f"📅 {weekday}, {tour_date:%d.%m.%Y}\n"
-        f"🔢 Тур #{tour_number}\n"
-        f"⏰ Время: {tour_time}\n"
-        f"🎮 Игр: {games_count}\n\n"
-        "👥 Введите количество команд в туре"
+        f"✅ Тур настроен:\n"
+        f"📅 {weekday}, {tour_date:%d.%m.%Y} | ⏰ {tour_time}\n"
+        f"🎮 {games_count} игр\n\n"
+        f"📝 Введите состав команды 1:\n"
+        f"Каждый игрок с новой строки.\n"
+        f"Формат: Фамилия Количество/Замена Количество"
     )
 
 
-@router.message(ScheduleCreation.waiting_for_teams)
-async def process_teams(msg: Message, state: FSMContext):
-    """Validate teams count (2 or 3) and start slot-based player selection"""
+@router.message(ScheduleCreation.waiting_for_team_1_composition)
+async def process_team_1_composition(msg: Message, state: FSMContext):
+    """Process team 1 composition"""
     if not msg.text:
-        await msg.answer("❌ Введите количество команд (2 или 3)")
+        await msg.answer("❌ Введите состав команды")
         return
 
-    try:
-        teams_count = int(msg.text.strip())
-        if teams_count not in (2, 3):
-            raise ValueError
-    except ValueError:
+    composition_text = msg.text.strip()
+    data = await state.get_data()
+    games_count = data.get("games_count", 10)
+
+    validation_result = await validate_team_composition(composition_text, games_count)
+
+    if not validation_result["valid"]:
         await msg.answer(
-            "❌ Неверное количество команд.\nВведите 2 или 3 (например: 2)"
+            build_composition_error_message(validation_result),
+            parse_mode="Markdown",
         )
         return
 
+    # Build formatted composition from validation result
+    formatted_composition = "\n".join(
+        slot["display"] for slot in validation_result["slots"]
+    )
+
+    await state.update_data(team_1_composition=formatted_composition)
+    await state.set_state(ScheduleCreation.waiting_for_team_2_composition)
+
     data = await state.get_data()
-    date_tour_id = data.get("date_tour_id")
-    tour_number = data.get("tour_number", 1)
     schedule_date = data.get("schedule_date")
     tour_time = data.get("tour_time")
     games_count = data.get("games_count")
 
-    if not all([date_tour_id, schedule_date, tour_time, games_count]):
+    if not schedule_date or not tour_time or not games_count:
         await msg.answer("❌ Ошибка состояния. Начните заново.")
-        await state.clear()
-        return
-
-    if not isinstance(schedule_date, str):
-        await msg.answer("❌ Ошибка данных даты. Начните заново.")
         await state.clear()
         return
 
     tour_date = date.fromisoformat(schedule_date)
     weekday = get_weekday_short(tour_date)
 
-    # Determine slots per team
-    slots_per_team = 4 if teams_count == 3 else 12
-
-    # Init slot-based state
-    await state.update_data(
-        teams_count=teams_count,
-        slots_per_team=slots_per_team,
-        total_games=games_count,
-        current_team=1,
-        current_slot=1,
-        slot_players=[],
-        all_selected_players=set(),
-        current_page=1,
-        is_reserve_list=False,
+    await msg.answer(
+        f"✅ Команда 1 сохранена!\n"
+        f"📅 {weekday}, {tour_date:%d.%m.%Y} | ⏰ {tour_time}\n"
+        f"🎮 {games_count} игр\n\n"
+        f"Команда 1:\n{formatted_composition}\n\n"
+        f"📝 Введите состав команды 2:"
     )
-    await state.set_state(ScheduleCreation.waiting_for_players)
 
-    # Get players from DB (sorted by Russian alphabet)
-    available = await get_available_players()
-    reserves = await get_reserve_players()
-    all_players = available + reserves
 
-    # Filter available players
-    available_players = [p for p in all_players if p.id not in set()]
+@router.message(ScheduleCreation.waiting_for_team_2_composition)
+async def process_team_2_composition(msg: Message, state: FSMContext):
+    """Process team 2 composition and show action keyboard"""
+    if not msg.text:
+        await msg.answer("❌ Введите состав команды")
+        return
 
-    # Paginate: 9 players per page (3x3 grid)
-    players_per_page = 9
-    total_pages = max(
-        1, (len(available_players) + players_per_page - 1) // players_per_page
+    composition_text = msg.text.strip()
+    data = await state.get_data()
+    games_count = data.get("games_count", 10)
+
+    validation_result = await validate_team_composition(composition_text, games_count)
+
+    if not validation_result["valid"]:
+        await msg.answer(
+            build_composition_error_message(validation_result),
+            parse_mode="Markdown",
+        )
+        return
+
+    # Build formatted composition from validation result
+    formatted_composition = "\n".join(
+        slot["display"] for slot in validation_result["slots"]
     )
-    current_page = 1
-    start_idx = (current_page - 1) * players_per_page
-    end_idx = start_idx + players_per_page
-    players_on_page = available_players[start_idx:end_idx]
 
-    # Send keyboard with 3x3 grid
-    keyboard = get_single_player_select_keyboard(
-        players=players_on_page,
-        all_players=all_players,
-        current_team=1,
-        players_selected=0,
-        required_per_team=slots_per_team,
-        page=current_page,
-        total_pages=total_pages,
-        is_reserve_list=False,
-    )
+    await state.update_data(team_2_composition=formatted_composition)
+
+    data = await state.get_data()
+    schedule_date = data.get("schedule_date")
+    tour_time = data.get("tour_time")
+    games_count = data.get("games_count")
+    team_1_composition = data.get("team_1_composition", "")
+
+    if not schedule_date or not tour_time or not games_count:
+        await msg.answer("❌ Ошибка состояния. Начните заново.")
+        await state.clear()
+        return
+
+    tour_date = date.fromisoformat(schedule_date)
+    weekday = get_weekday_short(tour_date)
 
     await msg.answer(
-        f"📅 {weekday}, {tour_date:%d.%m.%Y}\n"
-        f"🔢 Тур #{tour_number}\n"
-        f"⏰ Время: {tour_time}\n"
-        f"🎮 Игры: {games_count}\n"
-        f"👥 Команды: {teams_count} ({slots_per_team} слотов)\n\n"
-        f"✅ Выберите игрока для слота 1 (команда 1):",
-        reply_markup=keyboard,
-    )
-
-
-@router.callback_query(F.data.startswith("pick:"), ScheduleCreation.waiting_for_players)
-async def handle_player_pick(callback: CallbackQuery, state: FSMContext):
-    """Handle player selection for current slot"""
-    if (
-        not callback.message
-        or not isinstance(callback.message, Message)
-        or not callback
-    ):
-        await callback.answer("❌ Сообщение недоступно", show_alert=True)
-        return
-
-    if not callback.data:
-        return
-    
-
-    # Parse player ID
-    try:
-        player_id = int(callback.data.split(":")[1])
-    except (IndexError, ValueError):
-        await callback.answer("❌ Ошибка данных", show_alert=True)
-        return
-
-    data = await state.get_data()
-    current_team = data.get("current_team", 1)
-    current_slot = data.get("current_slot", 1)
-    total_games = data.get("total_games", 10)
-    slot_players = data.get("slot_players", [])
-    all_selected = data.get("all_selected_players", set())
-    current_page = data.get("current_page", 1)
-    is_reserve_list = data.get("is_reserve_list", False)
-
-    # Prevent adding more than 4 players to a slot
-    if len(slot_players) >= 4:
-        await callback.answer("❌ Максимум 4 игрока в слоте", show_alert=True)
-        return
-
-    # Prevent duplicate selection
-    if player_id in all_selected:
-        await callback.answer("⚠️ Игрок уже выбран", show_alert=True)
-        return
-
-    # Add player to current slot (games=0 means not yet assigned)
-    slot_players.append({"player_id": player_id, "games": 0})
-    all_selected.add(player_id)
-
-    # Get player name for feedback (temporary placeholder)
-    player_name = f"Игрок #{player_id}"
-
-    # Save progress
-    await state.update_data(
-        slot_players=slot_players,
-        all_selected_players=all_selected,
-        current_team=current_team,
-        current_slot=current_slot,
-        current_page=current_page,
-        is_reserve_list=is_reserve_list,
-    )
-
-    # Show action keyboard: add substitute OR next slot
-    keyboard = get_slot_actions_keyboard(
-        player_name=player_name,
-        current_slot=current_slot,
-        games_assigned=0,
-        total_games=total_games,
-        has_substitutes=False,
-    )
-
-    await callback.message.answer(
-        f"✅ {player_name} добавлен в слот {current_slot} (команда {current_team})\n\n"
+        f"✅ Команда 2 сохранена!\n\n"
+        f"📅 {weekday}, {tour_date:%d.%m.%Y} | ⏰ {tour_time}\n"
+        f"🎮 {games_count} игр\n\n"
+        f"Команда 1:\n{team_1_composition}\n\n"
+        f"Команда 2:\n{formatted_composition}\n\n"
         f"Выберите действие:",
-        reply_markup=keyboard,
+        reply_markup=get_add_team_3_keyboard(),
     )
 
-    await callback.answer()
 
-
-@router.callback_query(F.data.startswith("list:"), ScheduleCreation.waiting_for_players)
-async def handle_list_switch(callback: CallbackQuery, state: FSMContext):
-    """Switch between main and reserve players lists"""
-    if not callback.message or not isinstance(callback.message, Message):
-        await callback.answer("❌ Сообщение недоступно", show_alert=True)
+@router.callback_query(F.data == "add_team_3")
+async def handle_add_team_3(callback: CallbackQuery, state: FSMContext):
+    """Handle adding team 3"""
+    if not callback.message:
+        await callback.answer()
         return
 
-    if not callback.data:
-        return
-
-    # Parse list type
-    list_type = callback.data.split(":")[1]
-    is_reserve = list_type == "reserve"
+    await state.set_state(ScheduleCreation.waiting_for_team_3_composition)
 
     data = await state.get_data()
-    current_team = data.get("current_team", 1)
-    teams_count = data.get("teams_count", 2)
-    players_in_team = data.get("players_in_team", [])
-    all_selected = data.get("all_selected_players", set())
-    current_page = data.get("current_page", 1)
+    schedule_date = data.get("schedule_date")
+    tour_time = data.get("tour_time")
+    games_count = data.get("games_count")
+    team_1_composition = data.get("team_1_composition", "")
+    team_2_composition = data.get("team_2_composition", "")
 
-    # Get players from DB
-    available = await get_available_players()
-    reserves = await get_reserve_players()
-    all_players = available + reserves
+    if not schedule_date or not tour_time or not games_count:
+        await callback.message.answer("❌ Ошибка состояния. Начните заново.")
+        await state.clear()
+        await callback.answer()
+        return
 
-    # Filter available players based on list type
-    if is_reserve:
-        players_pool = [p for p in reserves if p.id not in all_selected]
-    else:
-        players_pool = [p for p in available if p.id not in all_selected]
+    tour_date = date.fromisoformat(schedule_date)
+    weekday = get_weekday_short(tour_date)
 
-    # Paginate: 9 players per page (3x3 grid)
-    players_per_page = 9
-    total_pages = max(1, (len(players_pool) + players_per_page - 1) // players_per_page)
-    current_page = min(current_page, total_pages)  # Keep within bounds
-
-    start_idx = (current_page - 1) * players_per_page
-    end_idx = start_idx + players_per_page
-    players_on_page = players_pool[start_idx:end_idx]
-
-    # Determine required players per team
-    required_per_team = 4 if teams_count == 3 else 12
-
-    # Update state
-    await state.update_data(is_reserve_list=is_reserve, current_page=current_page)
-
-    # Send updated keyboard
-    keyboard = get_single_player_select_keyboard(
-        players=players_on_page,
-        all_players=all_players,
-        current_team=current_team,
-        players_selected=len(players_in_team),
-        required_per_team=required_per_team,
-        page=current_page,
-        total_pages=total_pages,
-        is_reserve_list=is_reserve,
-    )
-
-    list_name = "запасных" if is_reserve else "основных"
     await callback.message.answer(
-        f"👥 Показаны {list_name} игроки:\n"
-        f"Команда {current_team}: {len(players_in_team)}/{required_per_team}",
-        reply_markup=keyboard,
+        f"📅 {weekday}, {tour_date:%d.%m.%Y} | ⏰ {tour_time}\n"
+        f"🎮 {games_count} игр\n\n"
+        f"Команда 1:\n{team_1_composition}\n\n"
+        f"Команда 2:\n{team_2_composition}\n\n"
+        f"📝 Введите состав команды 3:"
     )
-
-    # Delete previous message to avoid clutter (optional, safe version)
-    try:
-        if callback.message:
-            await callback.message.delete()
-    except Exception:
-        pass
-
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("page:"), ScheduleCreation.waiting_for_players)
-async def handle_pagination(callback: CallbackQuery, state: FSMContext):
-    """Handle pagination (prev/next page)"""
-    if not callback.message or not isinstance(callback.message, Message):
-        await callback.answer("❌ Сообщение недоступно", show_alert=True)
-        return
-
-    if not callback.data:
-        return
-
-    # Parse direction
-    direction = callback.data.split(":")[1]
-    if direction not in ("prev", "next"):
+@router.callback_query(F.data == "finish_schedule")
+async def handle_finish_schedule(callback: CallbackQuery, state: FSMContext):
+    """Handle finishing schedule creation and show final preview"""
+    if not callback.message:
         await callback.answer()
         return
 
     data = await state.get_data()
-    current_team = data.get("current_team", 1)
-    teams_count = data.get("teams_count", 2)
-    players_in_team = data.get("players_in_team", [])
-    all_selected = data.get("all_selected_players", set())
-    current_page = data.get("current_page", 1)
-    is_reserve_list = data.get("is_reserve_list", False)
+    schedule_date = data.get("schedule_date")
+    tour_time = data.get("tour_time")
+    games_count = data.get("games_count")
+    team_1_composition = data.get("team_1_composition", "")
+    team_2_composition = data.get("team_2_composition", "")
+    team_3_composition = data.get("team_3_composition")
 
-    # Get players from DB
-    available = await get_available_players()
-    reserves = await get_reserve_players()
-    all_players = available + reserves
-
-    # Filter available players based on current list type
-    if is_reserve_list:
-        players_pool = [p for p in reserves if p.id not in all_selected]
-    else:
-        players_pool = [p for p in available if p.id not in all_selected]
-
-    # Paginate: 9 players per page (3x3 grid)
-    players_per_page = 9
-    total_pages = max(1, (len(players_pool) + players_per_page - 1) // players_per_page)
-
-    # Update page number
-    if direction == "prev" and current_page > 1:
-        current_page -= 1
-    elif direction == "next" and current_page < total_pages:
-        current_page += 1
-    else:
-        await callback.answer("⚠️ Нельзя перейти дальше", show_alert=False)
+    if not schedule_date or not tour_time or not games_count:
+        await callback.message.answer("❌ Ошибка состояния. Начните заново.")
+        await state.clear()
+        await callback.answer()
         return
 
-    start_idx = (current_page - 1) * players_per_page
-    end_idx = start_idx + players_per_page
-    players_on_page = players_pool[start_idx:end_idx]
+    teams_count = 2
+    if team_3_composition:
+        teams_count = 3
 
-    # Determine required players per team
-    required_per_team = 4 if teams_count == 3 else 12
+    current_tour = {
+        "time": tour_time,
+        "games": games_count,
+        "teams_count": teams_count,
+        "team_1_composition": team_1_composition,
+        "team_2_composition": team_2_composition,
+        "team_3_composition": team_3_composition
+    }
 
-    # Update state
-    await state.update_data(current_page=current_page)
+    tours = data.get("tours", [])
+    tours.append(current_tour)
+    await state.update_data(tours=tours)
 
-    # Send updated keyboard
-    keyboard = get_single_player_select_keyboard(
-        players=players_on_page,
-        all_players=all_players,
-        current_team=current_team,
-        players_selected=len(players_in_team),
-        required_per_team=required_per_team,
-        page=current_page,
-        total_pages=total_pages,
-        is_reserve_list=is_reserve_list,
-    )
+    tour_date = date.fromisoformat(schedule_date)
+
+    # То же форматирование, что видят игроки
+    player_view = build_player_schedule_message(tour_date, tours)
+    message_text = "📋 ИТОГОВОЕ РАСПИСАНИЕ\n\n"
+    message_text += player_view
+    message_text += "\nТак это расписание увидят игроки.\n\nВыберите действие:"
 
     await callback.message.answer(
-        f"📄 Страница {current_page}/{total_pages}\n"
-        f"Команда {current_team}: {len(players_in_team)}/{required_per_team}",
-        reply_markup=keyboard,
+        message_text,
+        reply_markup=get_final_confirm_keyboard()
     )
-
-    # Delete previous message to avoid clutter (optional, safe version)
-    try:
-        if callback.message:
-            await callback.message.delete()
-    except Exception:
-        pass
-
     await callback.answer()
 
 
-@router.callback_query(F.data == "slot:next_slot", ScheduleCreation.waiting_for_players)
-async def handle_next_slot(callback: CallbackQuery, state: FSMContext):
-    """Complete current slot and finalize using shared logic"""
-    if not callback.message or not isinstance(callback.message, Message):
-        await callback.answer("❌ Сообщение недоступно", show_alert=True)
+@router.callback_query(F.data == "edit_tour")
+async def handle_edit_tour(callback: CallbackQuery, state: FSMContext):
+    """Show team selection for editing"""
+    if not callback.message:
+        await callback.answer()
         return
 
     data = await state.get_data()
-    total_games = data.get("total_games", 10)
-    slot_players = data.get("slot_players", [])
+    teams_count = data.get("teams_count", 2)
+    
+    # If team_3_composition exists, we have 3 teams
+    if data.get("team_3_composition"):
+        teams_count = 3
 
-    if not slot_players:
-        await callback.answer("❌ Нет игроков в текущем слоте", show_alert=True)
-        return
-
-    # Calculate remaining games and assign to last player
-    assigned_sum = sum(p["games"] for p in slot_players[:-1])
-    remaining_games = total_games - assigned_sum
-
-    if remaining_games < 0:
-        await callback.answer("❌ Ошибка: сумма игр превышает лимит", show_alert=True)
-        return
-
-    # Assign remaining games to last player
-    slot_players[-1]["games"] = remaining_games
-    await state.update_data(slot_players=slot_players)
-
-    # Delegate all complex logic to _finalize_slot
-    await _finalize_slot(callback.message, state)
+    await callback.message.answer(
+        "✏️ Редактирование тура\n\n"
+        "Выберите команду для редактирования:",
+        reply_markup=get_edit_team_select_keyboard(teams_count)
+    )
     await callback.answer()
 
 
-@router.callback_query(
-    F.data == "slot:add_substitute", ScheduleCreation.waiting_for_players
-)
-async def handle_add_substitute(callback: CallbackQuery, state: FSMContext):
-    """Prompt admin to enter games count for last added player before selecting substitute"""
-    if not callback.message or not isinstance(callback.message, Message):
-        await callback.answer("❌ Сообщение недоступно", show_alert=True)
-        return
-
-    data = await state.get_data()
-    slot_players = data.get("slot_players", [])
-    total_games = data.get("total_games", 10)
-
-    if not slot_players:
-        await callback.answer("❌ Нет игроков в слоте", show_alert=True)
+@router.callback_query(F.data.startswith("edit_team:"))
+async def handle_edit_team_select(callback: CallbackQuery, state: FSMContext):
+    """Handle team selection for editing"""
+    if not callback.message:
+        await callback.answer()
         return
     
-    if len(slot_players) >= 4:
-        await callback.answer("❌ Максимум 4 игрока в слоте", show_alert=True)
-        return
-
-    # Calculate already assigned games (excluding last player who has games=0)
-    assigned_sum = sum(p["games"] for p in slot_players[:-1])
-    remaining = total_games - assigned_sum
-
-    if remaining <= 0:
-        await callback.answer("❌ Все игры уже распределены", show_alert=True)
-        return
-
-    # Save context and switch to games input state
-    await state.update_data(
-        waiting_for_substitute=True  # Flag: next player will be substitute
-    )
-    await state.set_state(ScheduleCreation.waiting_for_games_in_slot)
-
-    last_player_id = slot_players[-1]["player_id"]
-    await callback.message.answer(
-        f"🔢 Сколько игр сыграет Игрок #{last_player_id} до замены?\n"
-        f"Доступно: {remaining} игр (максимум)"
-    )
-
-    await callback.answer()
-
-
-@router.message(ScheduleCreation.waiting_for_games_in_slot)
-async def handle_games_in_slot(msg: Message, state: FSMContext):
-    """Handle input of games count for current player in slot"""
-    if not msg.text:
-        await msg.answer("❌ Введите число")
+    if not callback.data:
         return
 
     try:
-        games_input = int(msg.text.strip())
-        if games_input <= 0:
-            raise ValueError
-    except ValueError:
-        await msg.answer("❌ Введите положительное число (например: 6)")
+        team_number = int(callback.data.split(":")[1])
+    except (IndexError, ValueError):
+        await callback.answer("❌ Ошибка")
         return
 
     data = await state.get_data()
-    slot_players = data.get("slot_players", [])
-    total_games = data.get("total_games", 10)
-    current_team = data.get("current_team", 1)
-    current_slot = data.get("current_slot", 1)
-    all_selected = data.get("all_selected_players", set())
-    current_page = data.get("current_page", 1)
-    is_reserve_list = data.get("is_reserve_list", False)
+    
+    # Get the selected team composition
+    if team_number == 1:
+        composition = data.get("team_1_composition", "")
+    elif team_number == 2:
+        composition = data.get("team_2_composition", "")
+    else:
+        composition = data.get("team_3_composition", "")
 
-    if not slot_players:
-        await msg.answer("❌ Ошибка: нет игроков в слоте")
-        await state.set_state(ScheduleCreation.waiting_for_players)
+    if not composition:
+        await callback.answer("❌ Команда не найдена", show_alert=True)
         return
 
-    # Calculate already assigned games (excluding last player who we are updating)
-    assigned_sum = sum(p["games"] for p in slot_players[:-1])
-    remaining_before = total_games - assigned_sum
+    # Save context for editing
+    await state.update_data(editing_team=team_number)
+    await state.set_state(ScheduleCreation.waiting_for_team_edit)
 
-    if games_input > remaining_before:
+    # Send composition without any extra text (easy to copy)
+    await callback.message.answer(composition)
+    await callback.answer()
+
+
+@router.message(ScheduleCreation.waiting_for_team_edit)
+async def process_team_edit(msg: Message, state: FSMContext):
+    """Process edited team composition"""
+    if not msg.text:
+        await msg.answer("❌ Введите состав команды")
+        return
+
+    composition_text = msg.text.strip()
+    data = await state.get_data()
+    editing_team = data.get("editing_team")
+    games_count = data.get("games_count", 10)
+
+    if not editing_team:
+        await msg.answer("❌ Ошибка состояния. Начните заново.")
+        await state.clear()
+        return
+
+    # Validate the new composition
+    validation_result = await validate_team_composition(composition_text, games_count)
+
+    if not validation_result["valid"]:
         await msg.answer(
-            f"❌ Слишком много игр. Максимум: {remaining_before}\n"
-            f"Повторите ввод:"
+            build_composition_error_message(validation_result),
+            parse_mode="Markdown",
         )
         return
 
-    # Update last player's games count
-    slot_players[-1]["games"] = games_input
-    remaining_after = total_games - (assigned_sum + games_input)
+    # Update the team composition
+    if editing_team == 1:
+        await state.update_data(team_1_composition=composition_text)
+    elif editing_team == 2:
+        await state.update_data(team_2_composition=composition_text)
+    else:
+        await state.update_data(team_3_composition=composition_text)
 
-    # Save updated state
-    await state.update_data(slot_players=slot_players)
+    # Save team number for message before clearing
+    updated_team_number = editing_team
 
-    if remaining_after == 0:
-        # Slot is complete — finalize it automatically
-        await _finalize_slot(msg, state)
+    # Clear editing state
+    await state.update_data(editing_team=None)
+    await state.set_state(None)
+
+    # Show updated tour with all teams
+    data = await state.get_data()
+    schedule_date = data.get("schedule_date")
+    tour_time = data.get("tour_time")
+    games_count = data.get("games_count")
+    team_1 = data.get("team_1_composition", "")
+    team_2 = data.get("team_2_composition", "")
+    team_3 = data.get("team_3_composition")
+
+    if not schedule_date or not tour_time or not games_count:
+        await msg.answer("❌ Ошибка состояния. Начните заново.")
+        await state.clear()
         return
 
-    # Still games left — show player selection for substitute
-    available = await get_available_players()
-    reserves = await get_reserve_players()
-    all_players = available + reserves
-    available_players = [p for p in all_players if p.id not in all_selected]
+    tour_date = date.fromisoformat(schedule_date)
+    weekday = get_weekday_short(tour_date)
 
-    if not available_players:
-        await msg.answer("❌ Нет доступных игроков для замены!")
-        return
+    message_text = f"✅ Команда {updated_team_number} обновлена!\n\n"
+    message_text += f"📅 {weekday}, {tour_date:%d.%m.%Y} | ⏰ {tour_time}\n"
+    message_text += f"🎮 {games_count} игр\n\n"
+    message_text += "────────────────────\n\n"
+    message_text += f"Команда 1:\n{team_1}\n\n"
+    message_text += f"Команда 2:\n{team_2}\n"
+    if team_3:
+        message_text += f"\nКоманда 3:\n{team_3}\n"
 
-    # Paginate
-    players_per_page = 9
-    total_pages = max(1, (len(available_players) + players_per_page - 1) // players_per_page)
-    start_idx = (current_page - 1) * players_per_page
-    end_idx = start_idx + players_per_page
-    players_on_page = available_players[start_idx:end_idx]
-
-    keyboard = get_single_player_select_keyboard(
-        players=players_on_page,
-        all_players=all_players,
-        current_team=current_team,
-        players_selected=len(slot_players),
-        required_per_team=data.get("slots_per_team", 4),
-        page=current_page,
-        total_pages=total_pages,
-        is_reserve_list=is_reserve_list
-    )
-
-    await state.set_state(ScheduleCreation.waiting_for_players)
     await msg.answer(
-        f"✅ Игроку #{slot_players[-1]['player_id']} назначено {games_input} игр\n"
-        f"Осталось: {remaining_after} игр в слоте {current_slot}\n\n"
-        f"🔄 Выберите замену для слота {current_slot} (команда {current_team}):",
-        reply_markup=keyboard
+        message_text,
+        reply_markup=get_add_team_3_keyboard()
     )
 
-async def _finalize_slot(message: Message, state: FSMContext):
-    """Helper: finalize current slot using FRESH data from state"""
-    data = await state.get_data()  # ← Актуальные данные из состояния
-    
-    current_team = data.get("current_team", 1)
-    current_slot = data.get("current_slot", 1)
-    slots_per_team = data.get("slots_per_team", 4)
-    slot_players = data.get("slot_players", [])
-    all_selected = data.get("all_selected_players", set())
-    teams_count = data.get("teams_count", 2)
 
-    # Save completed slot
-    team_slots = data.get("team_slots", {})
-    team_slots_key = f"team_{current_team}"
-    team_slots.setdefault(team_slots_key, []).append(slot_players.copy())
+@router.callback_query(F.data == "back_to_tour_menu")
+async def handle_back_to_tour_menu(callback: CallbackQuery, state: FSMContext):
+    """Go back to tour editing menu"""
+    if not callback.message:
+        await callback.answer()
+        return
 
-    # Check if team is complete
-    team_complete = len(team_slots[team_slots_key]) >= slots_per_team
+    # Just acknowledge and let user continue
+    await callback.message.answer("↩️ Возврат в меню редактирования")
+    await callback.answer()
 
-    if team_complete:
-        next_team = current_team + 1
-        next_slot = 1
 
-        if next_team > teams_count:
-            # All teams complete
-            await state.update_data(
-                team_slots=team_slots,
-                current_team=current_team,
-                current_slot=current_slot,
-                slot_players=[],
-                all_selected_players=all_selected
-            )
-            await message.answer(
-                f"✅ Все {teams_count} команды заполнены!\n\n"
-                f"Выберите действие:",
-                reply_markup=get_teams_complete_keyboard(teams_count)
+@router.callback_query(F.data == "add_another_tour")
+async def handle_add_another_tour(callback: CallbackQuery, state: FSMContext):
+    """Handle adding another tour — save current tour and start new one."""
+    if not callback.message:
+        await callback.answer()
+        return
+
+    data = await state.get_data()
+    schedule_date = data.get("schedule_date")
+    tours = data.get("tours", [])
+    tour_time = data.get("tour_time")
+    games_count = data.get("games_count")
+    team_1_composition = data.get("team_1_composition", "")
+    team_2_composition = data.get("team_2_composition", "")
+    team_3_composition = data.get("team_3_composition")
+
+    if not schedule_date or not tour_time or not games_count:
+        await callback.message.answer("❌ Ошибка состояния. Начните заново.")
+        await state.clear()
+        await callback.answer()
+        return
+
+    # Save current tour into list
+    teams_count = 2
+    if team_3_composition:
+        teams_count = 3
+
+    current_tour = {
+        "time": tour_time,
+        "games": games_count,
+        "teams_count": teams_count,
+        "team_1_composition": team_1_composition,
+        "team_2_composition": team_2_composition,
+        "team_3_composition": team_3_composition,
+    }
+
+    tours.append(current_tour)
+    # Очищаем состав третьей команды, чтобы следующий тур не унаследовал его
+    await state.update_data(tours=tours, team_3_composition=None)
+
+    tour_date = date.fromisoformat(schedule_date)
+    weekday = get_weekday_short(tour_date)
+
+    # Show previous tours with full compositions
+    message_text = f"📅 {weekday}, {tour_date:%d.%m.%Y}\n\n"
+    message_text += f"➕ Добавление тура #{len(tours) + 1}\n\n"
+
+    if tours:
+        message_text += "📋 Ранее добавленные туры:\n\n"
+        for i, tour in enumerate(tours, 1):
+            message_text += f"🔢 Тур {i} | ⏰ {tour['time']} | 🎮 {tour['games']} игр\n"
+            message_text += f"Команда 1:\n{tour['team_1_composition']}\n\n"
+            message_text += f"Команда 2:\n{tour['team_2_composition']}\n"
+            if tour.get("team_3_composition"):
+                message_text += f"Команда 3:\n{tour['team_3_composition']}\n"
+            message_text += "\n────────────────────\n\n"
+
+    message_text += "⏰ Введите время нового тура (ЧЧ:ММ)\nПример: 15:40"
+
+    await state.set_state(ScheduleCreation.waiting_for_time)
+    await callback.message.answer(message_text)
+    await callback.answer()
+
+
+def _format_tour_list_message(tour_date: date, tours: list[dict], title: str = "📋 Редактирование игрового дня") -> str:
+    """Build message text for list of tours (draft or from DB)."""
+    weekday = get_weekday_short(tour_date)
+    msg = f"{title}\n\n📅 {weekday}, {tour_date:%d.%m.%Y}\n\n"
+    for i, t in enumerate(tours, 1):
+        msg += f"🔢 Тур {i} | ⏰ {t.get('time', '')} | 🎮 {t.get('games', 0)} игр\n"
+    msg += "\nВыберите тур для редактирования:"
+    return msg
+
+
+def _format_edit_tour_message(tour: dict, tour_date: date) -> str:
+    """Build message text for single tour edit menu."""
+    weekday = get_weekday_short(tour_date)
+    msg = f"✏️ Тур | 📅 {weekday}, {tour_date:%d.%m.%Y}\n\n"
+    msg += f"⏰ {tour.get('time', '')} | 🎮 {tour.get('games', 0)} игр\n\n"
+    msg += f"Команда 1:\n{tour.get('team_1_composition', '')}\n\n"
+    msg += f"Команда 2:\n{tour.get('team_2_composition', '')}\n"
+    if tour.get("team_3_composition"):
+        msg += f"\nКоманда 3:\n{tour['team_3_composition']}\n"
+    msg += "\nЧто изменить?"
+    return msg
+
+
+@router.callback_query(F.data == "edit_schedule")
+async def handle_edit_schedule(callback: CallbackQuery, state: FSMContext):
+    """From final preview: show draft tour list for editing this day."""
+    if not callback.message:
+        await callback.answer()
+        return
+
+    data = await state.get_data()
+    schedule_date = data.get("schedule_date")
+    tours = data.get("tours", [])
+
+    if not schedule_date or not tours:
+        await callback.message.answer("❌ Ошибка состояния. Начните заново.")
+        await state.clear()
+        await callback.answer()
+        return
+
+    tour_date = date.fromisoformat(schedule_date)
+    await callback.message.answer(
+        _format_tour_list_message(tour_date, tours),
+        reply_markup=get_tour_list_keyboard(len(tours), from_db=False),
+    )
+    await state.update_data(edit_mode_from_db=False)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("edit_draft_tour:"))
+async def handle_edit_draft_tour(callback: CallbackQuery, state: FSMContext):
+    """Select a draft tour to edit (from final preview)."""
+    if not callback.message or not callback.data:
+        await callback.answer()
+        return
+
+    try:
+        i = int(callback.data.split(":")[1])
+    except (IndexError, ValueError):
+        await callback.answer("❌ Ошибка")
+        return
+
+    data = await state.get_data()
+    tours = data.get("tours", [])
+    schedule_date = data.get("schedule_date")
+
+    if i < 1 or i > len(tours) or not schedule_date:
+        await callback.answer("❌ Ошибка")
+        return
+
+    tour = tours[i - 1]
+    tour_date = date.fromisoformat(schedule_date)
+    teams_count = tour.get("teams_count", 2)
+
+    await state.update_data(
+        editing_tour_index=i,
+        edit_mode_from_db=False,
+        tour_time=tour.get("time"),
+        games_count=tour.get("games"),
+        team_1_composition=tour.get("team_1_composition", ""),
+        team_2_composition=tour.get("team_2_composition", ""),
+        team_3_composition=tour.get("team_3_composition"),
+    )
+    await callback.message.answer(
+        _format_edit_tour_message(tour, tour_date),
+        reply_markup=get_edit_tour_menu_keyboard(teams_count),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("edit_db_tour:"))
+async def handle_edit_db_tour(callback: CallbackQuery, state: FSMContext):
+    """Select a saved tour to edit (from edit-past flow)."""
+    if not callback.message or not callback.data:
+        await callback.answer()
+        return
+
+    try:
+        i = int(callback.data.split(":")[1])
+    except (IndexError, ValueError):
+        await callback.answer("❌ Ошибка")
+        return
+
+    data = await state.get_data()
+    tours = data.get("tours", [])
+    schedule_date = data.get("schedule_date")
+
+    if i < 1 or i > len(tours) or not schedule_date:
+        await callback.answer("❌ Ошибка")
+        return
+
+    tour = tours[i - 1]
+    tour_date = date.fromisoformat(schedule_date)
+    teams_count = tour.get("teams_count", 2)
+
+    await state.update_data(
+        editing_tour_index=i,
+        editing_tour_id=tour.get("id"),
+        edit_mode_from_db=True,
+        tour_time=tour.get("time"),
+        games_count=tour.get("games"),
+        team_1_composition=tour.get("team_1_composition", ""),
+        team_2_composition=tour.get("team_2_composition", ""),
+        team_3_composition=tour.get("team_3_composition"),
+    )
+    await callback.message.answer(
+        _format_edit_tour_message(tour, tour_date),
+        reply_markup=get_edit_tour_menu_keyboard(teams_count),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("edit_field:"))
+async def handle_edit_field(callback: CallbackQuery, state: FSMContext):
+    """Start editing one field: time, games, or team 1/2/3."""
+    if not callback.message or not callback.data:
+        await callback.answer()
+        return
+
+    field = callback.data.split(":")[1]
+    prompts = {
+        "time": "⏰ Введите время тура (ЧЧ:ММ)\nПример: 08:30",
+        "games": "🎮 Введите количество игр (1–20)",
+        "team_1": "📝 Введите состав команды 1:",
+        "team_2": "📝 Введите состав команды 2:",
+        "team_3": "📝 Введите состав команды 3:",
+    }
+    if field not in prompts:
+        await callback.answer()
+        return
+
+    await state.update_data(editing_field=field)
+    await state.set_state(ScheduleCreation.waiting_for_edit_value)
+    text = prompts[field]
+    data = await state.get_data()
+    if field.startswith("team_") and data.get("edit_mode_from_db"):
+        text += "\n\n💡 Можно указать игроку больше игр, чем в туре (если доигрывал за отсутствующего)."
+    await callback.message.answer(text)
+    await callback.answer()
+
+
+@router.message(ScheduleCreation.waiting_for_edit_value)
+async def process_edit_value(msg: Message, state: FSMContext):
+    """Process edited value and update tour (draft in state or prepare for DB save on Done)."""
+    if not msg.text:
+        await msg.answer("❌ Введите значение")
+        return
+
+    data = await state.get_data()
+    field = data.get("editing_field")
+    editing_tour_index = data.get("editing_tour_index")
+    tours = data.get("tours", [])
+
+    if not field or not editing_tour_index or editing_tour_index > len(tours):
+        await msg.answer("❌ Ошибка состояния.")
+        await state.set_state(None)
+        return
+
+    tour = dict(tours[editing_tour_index - 1])
+    schedule_date = data.get("schedule_date")
+    tour_date = date.fromisoformat(schedule_date) if schedule_date else date.today()
+
+    if field == "time":
+        normalized = normalize_time_hhmm(msg.text.strip())
+        if not normalized:
+            await msg.answer("❌ Неверный формат времени. Пример: 08:30")
+            return
+        tour["time"] = normalized
+    elif field == "games":
+        try:
+            games_count = int(msg.text.strip())
+            if games_count < 1 or games_count > 20:
+                raise ValueError
+        except ValueError:
+            await msg.answer("❌ Введите число от 1 до 20")
+            return
+        tour["games"] = games_count
+    elif field in ("team_1", "team_2", "team_3"):
+        composition_text = msg.text.strip()
+        games_count = tour.get("games", 10)
+        # При редактировании тура из БД разрешаем игры выше лимита тура (доиграл за отсутствующего)
+        from_db = data.get("edit_mode_from_db", False)
+        validation_result = await validate_team_composition(
+            composition_text, games_count, allow_extra_games=from_db
+        )
+        if not validation_result["valid"]:
+            await msg.answer(
+                build_composition_error_message(validation_result),
+                parse_mode="Markdown",
             )
             return
-    else:
-        next_team = current_team
-        next_slot = current_slot + 1
+        formatted = "\n".join(slot["display"] for slot in validation_result["slots"])
+        key = "team_1_composition" if field == "team_1" else "team_2_composition" if field == "team_2" else "team_3_composition"
+        tour[key] = formatted
+        if field == "team_1":
+            await state.update_data(team_1_composition=formatted)
+        elif field == "team_2":
+            await state.update_data(team_2_composition=formatted)
+        else:
+            await state.update_data(team_3_composition=formatted)
 
-    # Prepare for next slot
-    await state.update_data(
-        team_slots=team_slots,
-        current_team=next_team,
-        current_slot=next_slot,
-        slot_players=[],
-        all_selected_players=all_selected,
-        current_page=1,
-        is_reserve_list=False
+    tours[editing_tour_index - 1] = tour
+    await state.update_data(tours=tours, editing_field=None)
+    await state.set_state(None)
+
+    teams_count = tour.get("teams_count", 2)
+    await msg.answer(
+        _format_edit_tour_message(tour, tour_date),
+        reply_markup=get_edit_tour_menu_keyboard(teams_count),
     )
 
-    # Get players for next slot
-    available = await get_available_players()
-    reserves = await get_reserve_players()
-    all_players = available + reserves
-    available_players = [p for p in all_players if p.id not in all_selected]
 
-    if not available_players:
-        await message.answer("❌ Нет доступных игроков для следующего слота!")
+@router.callback_query(F.data == "edit_tour_done")
+async def handle_edit_tour_done(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    """Finish editing one tour. Persist to DB if edit-past, then show tour list."""
+    if not callback.message:
+        await callback.answer()
         return
 
-    players_per_page = 9
-    total_pages = max(1, (len(available_players) + players_per_page - 1) // players_per_page)
-    players_on_page = available_players[:players_per_page]
+    data = await state.get_data()
+    editing_tour_index = data.get("editing_tour_index")
+    from_db = data.get("edit_mode_from_db", False)
+    schedule_date = data.get("schedule_date")
+    tours = data.get("tours", [])
 
-    keyboard = get_single_player_select_keyboard(
-        players=players_on_page,
-        all_players=all_players,
-        current_team=next_team,
-        players_selected=0,
-        required_per_team=slots_per_team,
-        page=1,
-        total_pages=total_pages,
-        is_reserve_list=False
+    if not editing_tour_index or editing_tour_index > len(tours):
+        await callback.message.answer("❌ Ошибка состояния.")
+        await state.clear()
+        await callback.answer()
+        return
+
+    tour = tours[editing_tour_index - 1]
+    tour_date = date.fromisoformat(schedule_date) if schedule_date else date.today()
+
+    if from_db:
+        tour_id = data.get("editing_tour_id")
+        if not tour_id:
+            await callback.message.answer("❌ Ошибка: тур не найден.")
+            await callback.answer()
+            return
+        try:
+            updated = await update_tour_db(
+                tour_id=tour_id,
+                time=tour.get("time", ""),
+                games=tour.get("games", 0),
+                teams_count=tour.get("teams_count", 2),
+                team_1_composition=tour.get("team_1_composition", ""),
+                team_2_composition=tour.get("team_2_composition", ""),
+                team_3_composition=tour.get("team_3_composition"),
+            )
+            if updated:
+                await notify_players_schedule_changed(tour_date, bot)
+        except Exception as e:
+            await callback.message.answer(f"❌ Ошибка сохранения: {e}")
+            await callback.answer()
+            return
+        # Reload tours from DB
+        date_tour_id = data.get("date_tour_id")
+        if not isinstance(date_tour_id, int):
+            await callback.message.answer("❌ Ошибка состояния: не указан игровой день.")
+            await callback.answer()
+            return
+
+        db_tours = await get_tours_by_date_tour_id(date_tour_id)
+        tours = [
+            {
+                "id": t.id,
+                "time": t.time,
+                "games": t.games,
+                "teams_count": t.teams_count,
+                "team_1_composition": t.team_1_composition or "",
+                "team_2_composition": t.team_2_composition or "",
+                "team_3_composition": t.team_3_composition,
+            }
+            for t in db_tours
+        ]
+        await state.update_data(tours=tours)
+
+    await state.update_data(editing_tour_index=None, editing_tour_id=None)
+    await callback.message.answer(
+        "✅ Изменения сохранены.",
+    )
+    await callback.message.answer(
+        _format_tour_list_message(tour_date, tours),
+        reply_markup=get_tour_list_keyboard(len(tours), from_db=from_db),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "back_to_tour_list")
+async def handle_back_to_tour_list(callback: CallbackQuery, state: FSMContext):
+    """Return to tour list from edit menu (without saving in DB mode)."""
+    if not callback.message:
+        await callback.answer()
+        return
+
+    data = await state.get_data()
+    from_db = data.get("edit_mode_from_db", False)
+    schedule_date = data.get("schedule_date")
+    tours = data.get("tours", [])
+
+    await state.update_data(editing_tour_index=None, editing_tour_id=None)
+
+    if not schedule_date or not tours:
+        await callback.message.answer("❌ Ошибка состояния.")
+        await callback.answer()
+        return
+
+    tour_date = date.fromisoformat(schedule_date)
+    await callback.message.answer(
+        _format_tour_list_message(tour_date, tours),
+        reply_markup=get_tour_list_keyboard(len(tours), from_db=from_db),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "back_to_preview")
+async def handle_back_to_preview(callback: CallbackQuery, state: FSMContext):
+    """Return to final schedule preview from draft tour list."""
+    if not callback.message:
+        await callback.answer()
+        return
+
+    data = await state.get_data()
+    schedule_date = data.get("schedule_date")
+    tours = data.get("tours", [])
+
+    if not schedule_date or not tours:
+        await callback.message.answer("❌ Ошибка состояния.")
+        await callback.answer()
+        return
+
+    tour_date = date.fromisoformat(schedule_date)
+
+    # То же форматирование, что видят игроки
+    player_view = build_player_schedule_message(tour_date, tours)
+    message_text = "📋 ИТОГОВОЕ РАСПИСАНИЕ\n\n"
+    message_text += player_view
+    message_text += "\nТак это расписание увидят игроки.\n\nВыберите действие:"
+
+    await callback.message.answer(
+        message_text,
+        reply_markup=get_final_confirm_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "back_to_edit_menu")
+async def handle_back_to_edit_menu(callback: CallbackQuery, state: FSMContext):
+    """Finish edit-past flow and return to schedule menu."""
+    if not callback.message:
+        await callback.answer()
+        return
+
+    await state.clear()
+    await callback.message.answer(
+        "✅ Редактирование расписания завершено. Выберите действие в меню «Расписание».",
+    )
+    await callback.answer()
+
+
+@router.message(F.text == "✏️ Редактировать расписание")
+async def start_edit_past(msg: Message, state: FSMContext):
+    """Start edit-past flow: only for admin, ask for date ДД.ММ.ГГ to find day and edit."""
+    if not msg.from_user:
+        return
+    if msg.from_user.id != bot_settings.admin_players:
+        await msg.answer("Доступно только администратору.")
+        return
+
+    await state.clear()
+    await state.set_state(ScheduleCreation.waiting_for_edit_date)
+    await msg.answer(
+        "✏️ Редактирование расписания\n\n"
+        "Введите дату игрового дня в формате ДД.ММ.ГГ"
     )
 
-    action = "команды" if team_complete else "слота"
-    # DEBUG: Log slot composition
-    slot_summary = " | ".join([f"Игрок#{p['player_id']}({p['games']})" for p in slot_players])
-    print(f"DEBUG: Слот {current_slot} команды {current_team}: {slot_summary}")
-    await message.answer(
-        f"✅ Слот {current_slot} завершён (команда {current_team})\n\n"
-        f"➡️ Выберите игрока для {action} {next_team if team_complete else next_slot}:",
-        reply_markup=keyboard
+
+@router.message(ScheduleCreation.waiting_for_edit_date)
+async def process_edit_date(msg: Message, state: FSMContext):
+    """Load schedule by date and show tour list for editing."""
+    if not msg.text:
+        await msg.answer("❌ Введите дату в формате ДД.ММ.ГГ")
+        return
+
+    parsed = parse_date_ddmmyy(msg.text)
+    if not parsed:
+        await msg.answer("❌ Неверный формат даты. Пример: 25.02.26")
+        return
+
+    date_tour = await get_date_tour_by_date(parsed)
+    if not date_tour:
+        await msg.answer("На эту дату нет расписания.")
+        await state.clear()
+        return
+
+    db_tours = await get_tours_by_date_tour_id(date_tour.id)
+    if not db_tours:
+        await msg.answer("На эту дату нет туров.")
+        await state.clear()
+        return
+
+    tours = [
+        {
+            "id": t.id,
+            "time": t.time,
+            "games": t.games,
+            "teams_count": t.teams_count,
+            "team_1_composition": t.team_1_composition or "",
+            "team_2_composition": t.team_2_composition or "",
+            "team_3_composition": t.team_3_composition,
+        }
+        for t in db_tours
+    ]
+
+    await state.update_data(
+        date_tour_id=date_tour.id,
+        schedule_date=parsed.isoformat(),
+        tours=tours,
+        edit_mode_from_db=True,
+    )
+    await state.set_state(None)
+
+    tour_date = parsed
+    await msg.answer(
+        _format_tour_list_message(tour_date, tours, title="✏️ Редактирование расписания"),
+        reply_markup=get_tour_list_keyboard(len(tours), from_db=True),
+    )
+
+
+@router.callback_query(F.data == "delete_schedule")
+async def handle_delete_schedule(callback: CallbackQuery, state: FSMContext):
+    """Delete schedule draft and cancel creation"""
+    if not callback.message:
+        await callback.answer()
+        return
+
+    await state.clear()
+    await callback.message.answer(
+        "🗑️ Расписание удалено.\n\n"
+        "Создание расписания отменено."
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "confirm_publish")
+async def handle_confirm_publish(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    """Confirm and publish schedule - save to DB, notify players."""
+    if not callback.message:
+        await callback.answer()
+        return
+
+    data = await state.get_data()
+    schedule_date = data.get("schedule_date")
+    date_tour_id = data.get("date_tour_id")
+    tours = data.get("tours", [])
+
+    if not schedule_date or not tours or not date_tour_id:
+        await callback.message.answer("❌ Ошибка состояния. Начните заново.")
+        await state.clear()
+        await callback.answer()
+        return
+
+    tour_date = date.fromisoformat(schedule_date)
+
+    # Calculate stats
+    total_teams = sum(tour.get("teams_count", 2) for tour in tours)
+    total_games = sum(tour.get("games", 0) for tour in tours)
+
+    try:
+        await save_schedule_to_db(date_tour_id, tours)
+    except Exception as e:
+        await callback.message.answer(
+            f"❌ Ошибка при сохранении в БД: {e}\n\n"
+            f"Попробуйте ещё раз или обратитесь к разработчику."
+        )
+        await callback.answer()
+        return
+
+    await send_full_schedule_to_players(tour_date, tours, bot)
+
+    await state.clear()
+
+    # Show success message в запрошенном формате
+    weekday_full = get_weekday_full(tour_date)
+    day_month = get_date_day_month(tour_date)
+
+    await callback.message.answer(
+        "✅ РАСПИСАНИЕ ОПУБЛИКОВАНО!\n\n"
+        f"Дата: {weekday_full}, {day_month} {tour_date:%Y}\n"
+        "📊 Общая информация:\n"
+        f"• Туров: {len(tours)}\n"
+        f"• Всего игр: {total_games}\n"
+        "✅ Данные успешно занесены в базу\n"
+        "📩 Игроки получили уведомления"
+    )
+    await callback.answer()
+
+
+@router.message(ScheduleCreation.waiting_for_team_3_composition)
+async def process_team_3_composition(msg: Message, state: FSMContext):
+    """Process team 3 composition with validation and show final confirmation"""
+    if not msg.text:
+        await msg.answer("❌ Введите состав команды")
+        return
+
+    composition_text = msg.text.strip()
+    data = await state.get_data()
+    games_count = data.get("games_count", 10)
+
+    validation_result = await validate_team_composition(composition_text, games_count)
+
+    if not validation_result["valid"]:
+        await msg.answer(
+            build_composition_error_message(validation_result),
+            parse_mode="Markdown",
+        )
+        return
+
+    # Build formatted composition from validation result
+    formatted_composition = "\n".join(
+        slot["display"] for slot in validation_result["slots"]
+    )
+
+    await state.update_data(team_3_composition=formatted_composition)
+
+    data = await state.get_data()
+    schedule_date = data.get("schedule_date")
+    tour_time = data.get("tour_time")
+    games_count = data.get("games_count")
+    team_1_composition = data.get("team_1_composition", "")
+    team_2_composition = data.get("team_2_composition", "")
+
+    if not schedule_date or not tour_time or not games_count:
+        await msg.answer("❌ Ошибка состояния. Начните заново.")
+        await state.clear()
+        return
+
+    tour_date = date.fromisoformat(schedule_date)
+    weekday = get_weekday_short(tour_date)
+
+    await state.set_state(ScheduleCreation.waiting_for_confirm)
+
+    await msg.answer(
+        f"✅ Все команды введены!\n\n"
+        f"📅 {weekday}, {tour_date:%d.%m.%Y} | ⏰ {tour_time}\n"
+        f"🎮 {games_count} игр\n\n"
+        f"Команда 1:\n{team_1_composition}\n\n"
+        f"Команда 2:\n{team_2_composition}\n\n"
+        f"Команда 3:\n{formatted_composition}\n\n"
+        f"Выберите действие:",
+        reply_markup=get_team3_confirm_keyboard()
     )

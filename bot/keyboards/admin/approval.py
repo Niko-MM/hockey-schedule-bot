@@ -28,7 +28,7 @@ def get_first_role_keyboard(tg_id: int) -> InlineKeyboardMarkup:
         text="❌ Отклонить",
         callback_data=f"reject:{tg_id}"
     )
-    builder.adjust(2, 2, 1)  # ← 2 кнопки в первой строке, 2 во второй, 1 в третьей
+    builder.adjust(2, 2, 1)
     return builder.as_markup()
 
 

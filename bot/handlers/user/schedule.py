@@ -7,9 +7,10 @@ from db.crud import (
     get_next_tour_date_for_players,
     get_date_tour_by_date,
     get_tours_by_date_tour_id,
+    get_last_schedule_dates,
 )
 from bot.states.user_schedule import UserScheduleView
-from bot.utils.date_parser import parse_date_ddmmyy, get_weekday_full, get_date_day_month
+from bot.utils.date_parser import parse_date_ddmmyy, get_weekday_full, get_weekday_short, get_date_day_month
 from bot.services.schedule_notifications import build_player_schedule_message
 
 
@@ -74,9 +75,31 @@ async def handle_user_schedule(msg: Message, state: FSMContext):
 
 @router.message(F.text == "📅 Выбрать дату")
 async def start_pick_date(msg: Message, state: FSMContext):
-    """Запросить у пользователя дату для просмотра расписания."""
+    """Показать последние даты с расписанием и подсказку ввести дату текстом."""
+    if not msg.from_user:
+        return
+    person = await get_person_by_telegram_id(msg.from_user.id)
+    if not person:
+        await msg.answer("Сначала пройдите регистрацию.")
+        return
+    if not person.is_player:
+        await msg.answer("Расписание пока доступно только для роли игрока.")
+        return
+
+    dates = await get_last_schedule_dates(limit=10)
+    lines = [
+        "Выберите дату игрового дня.",
+        "",
+        "Последние даты с расписанием:",
+    ]
+    if dates:
+        for d in dates:
+            lines.append(f"{get_weekday_short(d)}.{d.day}")
+        lines.append("")
+    lines.append("Введите дату в формате ДД.ММ.ГГ (например, 15.03.26).")
+
+    await msg.answer("\n".join(lines))
     await state.set_state(UserScheduleView.waiting_for_date)
-    await msg.answer("Введите дату игрового дня в формате ДД.ММ.ГГ")
 
 
 @router.message(UserScheduleView.waiting_for_date)

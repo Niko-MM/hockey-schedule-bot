@@ -327,6 +327,23 @@ async def get_next_tour_date_for_players() -> date | None:
         result_last = await session.execute(stmt_last)
         return result_last.scalar_one_or_none()
 
+
+async def get_last_schedule_dates(limit: int = 10) -> list[date]:
+    """
+    Последние даты с расписанием (по убыванию даты — самые свежие первые).
+    Для подсказки пользователю при выборе даты.
+    """
+    async with async_session_maker() as session:
+        stmt = (
+            select(DateTour.date)
+            .join(Tour, Tour.date_tour_id == DateTour.id)
+            .order_by(DateTour.date.desc())
+            .limit(limit)
+        )
+        result = await session.execute(stmt)
+        return [row[0] for row in result.all()]
+
+
 async def find_player_by_surname(
     surname: str, 
     initial: str | None = None

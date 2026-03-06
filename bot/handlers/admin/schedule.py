@@ -1060,7 +1060,6 @@ async def handle_confirm_publish(callback: CallbackQuery, state: FSMContext, bot
     tour_date = date.fromisoformat(schedule_date)
 
     # Calculate stats
-    total_teams = sum(tour.get("teams_count", 2) for tour in tours)
     total_games = sum(tour.get("games", 0) for tour in tours)
 
     try:

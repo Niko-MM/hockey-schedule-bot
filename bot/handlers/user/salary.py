@@ -1,4 +1,5 @@
 """Обработчики меню пользователя: зарплата и заглушки (штрафы, рейтинги, правила)."""
+import logging
 from aiogram import Router, F
 from aiogram.types import Message
 
@@ -123,37 +124,59 @@ def _format_top_players(
     return lines
 
 
+def _get_current_period_fallback():
+    """Запасной расчёт периода без zoneinfo (если на сервере нет tzdata)."""
+    from datetime import date, timedelta
+    today = date.today()
+    weekday = today.weekday()
+    anchor = today - timedelta(days=weekday)
+    period_start = anchor
+    period_end = anchor + timedelta(days=14)
+    return period_start, period_end
+
+
 @router.message(F.text == "🏆 Рейтинги")
 async def handle_ratings(msg: Message):
     """Рейтинги: топ за 2 недели, главный нарушитель (заглушка), легенды лиги."""
-    period_start, period_end = get_current_two_week_period()
-    top_period = await get_top_players_by_games_in_period(
-        period_start, period_end, limit=3
-    )
-    legends = await get_top_players_by_total_games(limit=3)
+    try:
+        try:
+            period_start, period_end = get_current_two_week_period()
+        except Exception as e:
+            logging.warning("get_current_two_week_period failed, using fallback: %s", e)
+            period_start, period_end = _get_current_period_fallback()
 
-    period_str = f"{period_start.strftime('%d.%m')}–{period_end.strftime('%d.%m.%Y')}"
-    block1_lines = [
-        "🏆 Рейтинги",
-        "",
-        "📊 Топ по играм за 2 недели (" + period_str + ")",
-    ]
-    block1_lines.extend(_format_top_players(top_period) or ["— нет данных —"])
-    block1_lines.append("")
+        top_period = await get_top_players_by_games_in_period(
+            period_start, period_end, limit=3
+        )
+        legends = await get_top_players_by_total_games(limit=3)
 
-    block2_lines = [
-        "👮‍♂️ Главный нарушитель",
-        "Пока нет данных о штрафах.",
-        "",
-    ]
+        period_str = f"{period_start.strftime('%d.%m')}–{period_end.strftime('%d.%m.%Y')}"
+        block1_lines = [
+            "🏆 Рейтинги",
+            "",
+            "📊 Топ по играм за 2 недели (" + period_str + ")",
+        ]
+        block1_lines.extend(_format_top_players(top_period) or ["— нет данных —"])
+        block1_lines.append("")
 
-    block3_lines = [
-        "🏅 Легенды лиги (всего игр)",
-    ]
-    block3_lines.extend(_format_top_players(legends) or ["— нет данных —"])
+        block2_lines = [
+            "👮‍♂️ Главный нарушитель",
+            "Пока нет данных о штрафах.",
+            "",
+        ]
 
-    text = "\n".join(block1_lines + block2_lines + block3_lines)
-    await msg.answer(text)
+        block3_lines = [
+            "🏅 Легенды лиги (всего игр)",
+        ]
+        block3_lines.extend(_format_top_players(legends) or ["— нет данных —"])
+
+        text = "\n".join(block1_lines + block2_lines + block3_lines)
+        await msg.answer(text)
+    except Exception as e:
+        logging.exception("handle_ratings failed")
+        await msg.answer(
+            "Не удалось загрузить рейтинги. Попробуйте позже или обратитесь к администратору."
+        )
 
 
 @router.message(F.text == "📜 Правила")

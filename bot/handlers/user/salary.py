@@ -135,15 +135,24 @@ def _get_current_period_fallback():
     return period_start, period_end
 
 
+def _get_previous_period_fallback():
+    """Прошлые 2 недели (запасной расчёт без zoneinfo)."""
+    from datetime import timedelta
+    start, end = _get_current_period_fallback()
+    prev_start = start - timedelta(days=14)
+    prev_end = start
+    return prev_start, prev_end
+
+
 @router.message(F.text == "🏆 Рейтинги")
 async def handle_ratings(msg: Message):
-    """Рейтинги: топ за 2 недели, главный нарушитель (заглушка), легенды лиги."""
+    """Рейтинги: топ за прошлые 2 недели, главный нарушитель (заглушка), легенды лиги."""
     try:
         try:
-            period_start, period_end = get_current_two_week_period()
+            period_start, period_end = get_previous_two_week_period()
         except Exception as e:
-            logging.warning("get_current_two_week_period failed, using fallback: %s", e)
-            period_start, period_end = _get_current_period_fallback()
+            logging.warning("get_previous_two_week_period failed, using fallback: %s", e)
+            period_start, period_end = _get_previous_period_fallback()
 
         top_period = await get_top_players_by_games_in_period(
             period_start, period_end, limit=3
@@ -154,7 +163,7 @@ async def handle_ratings(msg: Message):
         block1_lines = [
             "🏆 Рейтинги",
             "",
-            "📊 Топ по играм за 2 недели (" + period_str + ")",
+            "📊 Топ по играм за прошлые 2 недели (" + period_str + ")",
         ]
         block1_lines.extend(_format_top_players(top_period) or ["— нет данных —"])
         block1_lines.append("")

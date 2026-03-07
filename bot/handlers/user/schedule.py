@@ -10,7 +10,7 @@ from db.crud import (
     get_last_schedule_dates,
 )
 from bot.states.user_schedule import UserScheduleView
-from bot.utils.date_parser import parse_date_ddmmyy, get_weekday_full, get_weekday_short, get_date_day_month
+from bot.utils.date_parser import parse_date_ddmmyy, get_weekday_full, get_date_day_month
 from bot.services.schedule_notifications import build_player_schedule_message
 
 
@@ -94,7 +94,7 @@ async def start_pick_date(msg: Message, state: FSMContext):
     ]
     if dates:
         for d in dates:
-            lines.append(f"{get_weekday_short(d)}.{d.day}")
+            lines.append(d.strftime("%d.%m.%y"))
         lines.append("")
     lines.append("Введите дату в формате ДД.ММ.ГГ (например, 15.03.26).")
 

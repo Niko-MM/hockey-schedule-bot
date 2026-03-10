@@ -4,6 +4,7 @@ import asyncio
 from bot.config import bot_settings
 from bot.handlers.registration import router as registration_router
 from bot.handlers.admin.players import router as admin_players_router
+from bot.handlers.admin.workers import router as admin_workers_router
 from bot.handlers.admin.approval import router as admin_approval_router
 from bot.handlers.admin.schedule import router as schedule_router
 from bot.handlers.user.salary import router as user_salary_router
@@ -17,6 +18,7 @@ async def main():
     dp.include_router(admin_approval_router)
     dp.include_router(registration_router)
     dp.include_router(admin_players_router)
+    dp.include_router(admin_workers_router)
     dp.include_router(schedule_router)
     dp.include_router(user_salary_router)
     dp.include_router(user_schedule_router)

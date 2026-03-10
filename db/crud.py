@@ -230,6 +230,26 @@ async def get_all_players() -> list[Person]:
         return sorted(players, key=_russian_sort_key)
 
 
+async def get_all_workers() -> list[Person]:
+    """
+    All active workers in the league (is_active, is_worker, not banned).
+    Sorted by Russian alphabet (А-Я, Ё → Е).
+    """
+    async with async_session_maker() as session:
+        stmt = (
+            select(Person)
+            .where(
+                Person.is_active,
+                Person.is_worker,
+                not_(Person.is_banned),
+            )
+            .order_by(Person.surname)
+        )
+        result = await session.execute(stmt)
+        workers = list(result.scalars().all())
+        return sorted(workers, key=_russian_sort_key)
+
+
 async def get_available_players() -> list[Person]:
     """
     Get active players available for regular games (is_available=True).

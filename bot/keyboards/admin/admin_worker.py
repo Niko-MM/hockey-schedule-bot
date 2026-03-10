@@ -3,11 +3,7 @@ from aiogram.types import ReplyKeyboardMarkup
 
 
 async def get_admin_worker_main_keyboard() -> ReplyKeyboardMarkup:
-    """
-    Главное меню админа работников.
-    Структура полностью повторяет меню админа игроков,
-    но вместо кнопки «👥 Игроки» используется «👷 Работники».
-    """
+    """Main menu keyboard for worker admin."""
     builder = ReplyKeyboardBuilder()
     builder.button(text="📋 Расписание")
     builder.button(text="👷 Работники")
@@ -18,13 +14,7 @@ async def get_admin_worker_main_keyboard() -> ReplyKeyboardMarkup:
 
 
 async def get_worker_schedule_keyboard() -> ReplyKeyboardMarkup:
-    """
-    Подменю «📋 Расписание» для админа работников.
-    Структура аналогична расписанию админа игроков:
-    - создание / редактирование расписания работников;
-    - переходы к расписанию игроков и вратарей;
-    - кнопка «Назад».
-    """
+    """Worker admin 📋 Schedule submenu (create/edit + view other schedules)."""
     builder = ReplyKeyboardBuilder()
     builder.button(text="➕ Составить расписание")
     builder.button(text="✏️ Редактировать расписание")
@@ -36,11 +26,7 @@ async def get_worker_schedule_keyboard() -> ReplyKeyboardMarkup:
 
 
 async def get_worker_control_keyboard() -> ReplyKeyboardMarkup:
-    """
-    Подменю «⚙️ Управление» для админа работников.
-    Пока базовый набор: заявки по работникам и расчёт их зарплаты.
-    При необходимости кнопки можно расширить.
-    """
+    """Worker admin ⚙️ Control submenu (applications and salary)."""
     builder = ReplyKeyboardBuilder()
     builder.button(text="📋 Заявки")
     builder.button(text="💰 Расчёт зарплаты")

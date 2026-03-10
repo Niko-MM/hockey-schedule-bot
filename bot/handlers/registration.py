@@ -7,6 +7,7 @@ from db.crud import get_person_by_telegram_id, create_person, update_person_user
 from bot.keyboards.user.registration import get_confirm_keyboard
 from bot.config import bot_settings
 from bot.keyboards.admin.admin_player import get_admin_main_keyboard
+from bot.keyboards.admin.admin_worker import get_admin_worker_main_keyboard
 from bot.keyboards.admin.approval import get_first_role_keyboard
 from bot.keyboards.user.main import get_user_keyboard
 
@@ -23,7 +24,17 @@ async def cmd_start(msg: Message, state: FSMContext):
         return
 
     if msg.from_user.id == bot_settings.admin_players:
-        await msg.answer("👑 Панель администратора", reply_markup=await get_admin_main_keyboard())
+        await msg.answer(
+            "👑 Панель администратора игроков",
+            reply_markup=await get_admin_main_keyboard(),
+        )
+        return
+
+    if msg.from_user.id == bot_settings.admin_worker:
+        await msg.answer(
+            "👷 Панель администратора работников",
+            reply_markup=await get_admin_worker_main_keyboard(),
+        )
         return
 
     person = await get_person_by_telegram_id(msg.from_user.id)

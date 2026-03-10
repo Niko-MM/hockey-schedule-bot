@@ -30,7 +30,7 @@ def _is_admin_player(msg: Message) -> bool:
     return bool(msg.from_user) and msg.from_user.id == bot_settings.admin_players
 
 
-@router.message(F.text == "🔙  Назад")
+@router.message(F.from_user.id == bot_settings.admin_players, F.text == "🔙  Назад")
 async def admin_button_back(msg: Message):
     if not _is_admin_player(msg):
         return
@@ -38,7 +38,7 @@ async def admin_button_back(msg: Message):
     await msg.answer("Главное меню", reply_markup=await get_admin_main_keyboard())
 
 
-@router.message(F.text == "⚙️ Управление")
+@router.message(F.from_user.id == bot_settings.admin_players, F.text == "⚙️ Управление")
 async def admin_control_button(msg: Message):
     if not _is_admin_player(msg):
         return
@@ -46,7 +46,7 @@ async def admin_control_button(msg: Message):
     await msg.answer("⚙️ Управление", reply_markup=await get_control_keyboard())
 
 
-@router.message(F.text == "👤 Личное")
+@router.message(F.from_user.id == bot_settings.admin_players, F.text == "👤 Личное")
 async def admin_personal_button(msg: Message):
     if not _is_admin_player(msg):
         return
@@ -54,7 +54,7 @@ async def admin_personal_button(msg: Message):
     await msg.answer("👤 Личное", reply_markup=await get_personal_keyboard())
 
 
-@router.message(F.text == "📋 Расписание")
+@router.message(F.from_user.id == bot_settings.admin_players, F.text == "📋 Расписание")
 async def admin_schedule_button(msg: Message):
     if not _is_admin_player(msg):
         return
@@ -62,7 +62,7 @@ async def admin_schedule_button(msg: Message):
     await msg.answer("📋 Расписание", reply_markup=await get_schedule_keyboard())
 
 
-@router.message(F.text == "👥 Игроки")
+@router.message(F.from_user.id == bot_settings.admin_players, F.text == "👥 Игроки")
 async def admin_players_list_button(msg: Message):
     """Список игроков лиги в алфавитном порядке."""
     if not _is_admin_player(msg):
@@ -95,7 +95,7 @@ async def admin_players_list_button(msg: Message):
             await msg.answer("\n".join(chunk))
 
 
-@router.message(F.text == "📋 Заявки")
+@router.message(F.from_user.id == bot_settings.admin_players, F.text == "📋 Заявки")
 async def admin_applications_button(msg: Message, bot: Bot):
     """Показать список ожидающих заявок на вступление (из Управления)."""
     if not _is_admin_player(msg):
@@ -123,9 +123,9 @@ async def admin_applications_button(msg: Message, bot: Bot):
 STUB_MESSAGE = "⏳ Этот раздел в разработке."
 
 
-@router.message(F.text == "✏️👤 Редактирование ролей")
-@router.message(F.text == "⚠️ Штрафы")
-@router.message(F.text == "⛔ Бан")
+@router.message(F.from_user.id == bot_settings.admin_players, F.text == "✏️👤 Редактирование ролей")
+@router.message(F.from_user.id == bot_settings.admin_players, F.text == "⚠️ Штрафы")
+@router.message(F.from_user.id == bot_settings.admin_players, F.text == "⛔ Бан")
 async def admin_control_stub(msg: Message):
     """Заглушки разделов Управления."""
     if not _is_admin_player(msg):
@@ -148,7 +148,7 @@ def _fmt_rub(amount: int) -> str:
     return f"{amount:,}".replace(",", " ")
 
 
-@router.message(F.text == "💰 Расчёт зарплаты")
+@router.message(F.from_user.id == bot_settings.admin_players, F.text == "💰 Расчёт зарплаты")
 async def admin_salary_calculation(msg: Message):
     """Предложить подтверждение: провести расчёт зарплаты игроков за предыдущий период."""
     if not _is_admin_player(msg):
@@ -237,8 +237,8 @@ async def admin_salary_cancel(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.message(F.text == "👷 Расписание работников")
-@router.message(F.text == "👽 Расписание вратарей")
+@router.message(F.from_user.id == bot_settings.admin_players, F.text == "👷 Расписание работников")
+@router.message(F.from_user.id == bot_settings.admin_players, F.text == "👽 Расписание вратарей")
 async def admin_schedule_stub(msg: Message):
     """Заглушки разделов расписания работников и вратарей."""
     if not _is_admin_player(msg):
@@ -246,7 +246,7 @@ async def admin_schedule_stub(msg: Message):
     await msg.answer(STUB_MESSAGE)
 
 
-@router.message(F.text == "💰 Моя зарплата")
+@router.message(F.from_user.id == bot_settings.admin_players, F.text == "💰 Моя зарплата")
 async def admin_my_salary(msg: Message):
     """Админ смотрит свою зарплату так же, как обычный пользователь."""
     if not _is_admin_player(msg):
@@ -255,7 +255,7 @@ async def admin_my_salary(msg: Message):
     await handle_salary(msg)
 
 
-@router.message(F.text == "🏆 Рейтинги")
+@router.message(F.from_user.id == bot_settings.admin_players, F.text == "🏆 Рейтинги")
 async def admin_my_ratings(msg: Message):
     """Админ смотрит рейтинги так же, как обычный пользователь."""
     if not _is_admin_player(msg):

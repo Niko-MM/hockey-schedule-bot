@@ -3,6 +3,11 @@ from aiogram.types import Message
 
 from bot.config import bot_settings
 from bot.keyboards.admin.admin_player import get_personal_keyboard
+from bot.keyboards.admin.admin_worker import (
+    get_admin_worker_main_keyboard,
+    get_worker_schedule_keyboard,
+    get_worker_control_keyboard,
+)
 from bot.handlers.user.salary import handle_salary, handle_ratings
 from db.crud import get_all_workers
 
@@ -12,6 +17,24 @@ router = Router(name="workers_admin")
 
 def _is_admin_worker(msg: Message) -> bool:
     return bool(msg.from_user) and msg.from_user.id == bot_settings.admin_worker
+
+
+@router.message(F.from_user.id == bot_settings.admin_worker, F.text == "🔙  Назад")
+async def admin_worker_back(msg: Message):
+    """Back to worker admin main menu."""
+    await msg.answer("Главное меню", reply_markup=await get_admin_worker_main_keyboard())
+
+
+@router.message(F.from_user.id == bot_settings.admin_worker, F.text == "📋 Расписание")
+async def admin_worker_schedule_button(msg: Message):
+    """Worker admin: open schedule submenu."""
+    await msg.answer("📋 Расписание", reply_markup=await get_worker_schedule_keyboard())
+
+
+@router.message(F.from_user.id == bot_settings.admin_worker, F.text == "⚙️ Управление")
+async def admin_worker_control_button(msg: Message):
+    """Worker admin: open control submenu (applications, roles, salary)."""
+    await msg.answer("⚙️ Управление", reply_markup=await get_worker_control_keyboard())
 
 
 @router.message(F.text == "👷 Работники")

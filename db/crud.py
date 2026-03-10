@@ -250,6 +250,84 @@ async def get_all_workers() -> list[Person]:
         return sorted(workers, key=_russian_sort_key)
 
 
+def _normalize_for_search(s: str) -> str:
+    """Normalize string for search (lower, ё→е)."""
+    return (s or "").strip().lower().replace("ё", "е")
+
+
+async def get_all_persons_for_role_edit() -> list[Person]:
+    """
+    All persons for role editor list (not banned), sorted by surname.
+    """
+    async with async_session_maker() as session:
+        stmt = (
+            select(Person)
+            .where(not_(Person.is_banned))
+            .order_by(Person.surname, Person.name)
+        )
+        result = await session.execute(stmt)
+        persons = list(result.scalars().all())
+        return sorted(persons, key=_russian_sort_key)
+
+
+async def search_persons_by_surname(
+    surname: str,
+    name_part: str | None = None,
+) -> list[Person]:
+    """
+    Search persons by surname (and optional name part).
+    Excludes banned. Returns list sorted by surname, name.
+    """
+    async with async_session_maker() as session:
+        stmt = (
+            select(Person)
+            .where(not_(Person.is_banned))
+            .order_by(Person.surname, Person.name)
+        )
+        result = await session.execute(stmt)
+        all_persons = list(result.scalars().all())
+    norm = _normalize_for_search(surname)
+    if not norm:
+        return []
+    persons = [
+        p
+        for p in all_persons
+        if _normalize_for_search(p.surname) == norm
+    ]
+    if name_part and persons:
+        name_norm = _normalize_for_search(name_part)
+        if name_norm:
+            persons = [
+                p
+                for p in persons
+                if (p.name or "").lower().replace("ё", "е").startswith(name_norm)
+                or (len(name_norm) == 1 and p.name and p.name[0].lower().replace("ё", "е") == name_norm)
+            ]
+    return sorted(persons, key=_russian_sort_key)
+
+
+async def update_person_roles(
+    person_id: int,
+    *,
+    is_player: bool,
+    is_worker: bool,
+    is_goalkeeper: bool,
+    is_officer: bool,
+) -> None:
+    """Set all role flags for a person."""
+    async with async_session_maker() as session:
+        stmt = select(Person).where(Person.id == person_id)
+        result = await session.execute(stmt)
+        person = result.scalar_one_or_none()
+        if not person:
+            return
+        person.is_player = is_player
+        person.is_worker = is_worker
+        person.is_goalkeeper = is_goalkeeper
+        person.is_officer = is_officer
+        await session.commit()
+
+
 async def get_available_players() -> list[Person]:
     """
     Get active players available for regular games (is_available=True).

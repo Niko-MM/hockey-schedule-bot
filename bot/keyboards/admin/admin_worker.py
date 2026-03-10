@@ -26,11 +26,12 @@ async def get_worker_schedule_keyboard() -> ReplyKeyboardMarkup:
 
 
 async def get_worker_control_keyboard() -> ReplyKeyboardMarkup:
-    """Worker admin ⚙️ Control submenu (applications and salary)."""
+    """Worker admin ⚙️ Control submenu (applications, roles, salary)."""
     builder = ReplyKeyboardBuilder()
     builder.button(text="📋 Заявки")
+    builder.button(text="✏️👤 Редактирование ролей")
     builder.button(text="💰 Расчёт зарплаты")
     builder.button(text="🔙  Назад")
-    builder.adjust(2, 1)
+    builder.adjust(2, 1, 1)
     return builder.as_markup(resize_keyboard=True)
 

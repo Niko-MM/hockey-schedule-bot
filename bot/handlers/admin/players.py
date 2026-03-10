@@ -123,11 +123,10 @@ async def admin_applications_button(msg: Message, bot: Bot):
 STUB_MESSAGE = "⏳ Этот раздел в разработке."
 
 
-@router.message(F.from_user.id == bot_settings.admin_players, F.text == "✏️👤 Редактирование ролей")
 @router.message(F.from_user.id == bot_settings.admin_players, F.text == "⚠️ Штрафы")
 @router.message(F.from_user.id == bot_settings.admin_players, F.text == "⛔ Бан")
 async def admin_control_stub(msg: Message):
-    """Заглушки разделов Управления."""
+    """Stub for control sections not yet implemented."""
     if not _is_admin_player(msg):
         return
     await msg.answer(STUB_MESSAGE)

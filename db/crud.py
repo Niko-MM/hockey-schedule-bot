@@ -442,6 +442,59 @@ async def get_last_schedule_dates(limit: int = 10) -> list[date]:
         return [row[0] for row in result.all()]
 
 
+async def save_worker_schedule_for_date(
+    tour_date: date,
+    slots: list[dict[str, Any]],
+) -> None:
+    """
+    Save worker schedule for a given date.
+
+    - Get or create DateTour for tour_date.
+    - Remove existing WorkerSchedule rows for this date.
+    - Insert new rows for non-break slots in the order they are given.
+    - 'camera_id' is stored as director_id, 'camera_c_id' as k_center_id.
+    """
+    async with async_session_maker() as session:
+        # Get or create DateTour
+        stmt_date = select(DateTour).where(DateTour.date == tour_date)
+        result = await session.execute(stmt_date)
+        date_tour = result.scalar_one_or_none()
+
+        if not date_tour:
+            date_tour = DateTour(date=tour_date)
+            session.add(date_tour)
+            await session.flush()
+
+        # Remove existing worker schedule for this date
+        await session.execute(
+            delete(WorkerSchedule).where(
+                WorkerSchedule.date_tour_id == date_tour.id
+            )
+        )
+
+        match_number = 0
+        for slot in slots:
+            if slot.get("is_break"):
+                # Breaks are not stored in DB; only used for image
+                continue
+
+            match_number += 1
+
+            ws = WorkerSchedule(
+                date_tour_id=date_tour.id,
+                match_number=match_number,
+                time_slot=slot.get("time_slot") or "",
+                operator_id=slot.get("operator_id"),
+                director_id=slot.get("camera_id"),
+                k_center_id=slot.get("camera_c_id"),
+                commentator_id=slot.get("commentator_id"),
+                referee_id=slot.get("referee_id"),
+            )
+            session.add(ws)
+
+        await session.commit()
+
+
 async def find_player_by_surname(
     surname: str, 
     initial: str | None = None

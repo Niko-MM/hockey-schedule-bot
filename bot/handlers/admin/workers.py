@@ -1,4 +1,5 @@
 from aiogram import Router, F
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from bot.config import bot_settings
@@ -8,8 +9,15 @@ from bot.keyboards.admin.admin_worker import (
     get_worker_schedule_keyboard,
     get_worker_control_keyboard,
 )
+from bot.states.worker_schedule import WorkerScheduleEdit
+from bot.utils.date_parser import parse_date_ddmmyy, get_weekday_full, get_date_day_month
+from bot.utils.worker_schedule_parser import parse_worker_schedule_csv
+from bot.utils.worker_schedule_resolver import resolve_worker_slots
 from bot.handlers.user.salary import handle_salary, handle_ratings
-from db.crud import get_all_workers
+from db.crud import get_all_workers, save_worker_schedule_for_date
+
+import aiohttp
+from datetime import date
 
 
 router = Router(name="workers_admin")
@@ -96,3 +104,133 @@ async def admin_worker_my_ratings(msg: Message):
         return
 
     await handle_ratings(msg)
+
+
+@router.message(F.text == "➕ Составить расписание")
+async def worker_schedule_create_start(msg: Message, state: FSMContext):
+    """Start worker schedule creation: ask for date."""
+    if not _is_admin_worker(msg):
+        return
+
+    await state.clear()
+    await state.set_state(WorkerScheduleEdit.waiting_for_date_create)
+    await msg.answer(
+        "📅 Создание расписания работников.\n"
+        "Введите дату в формате ДД.ММ.ГГ"
+    )
+
+
+@router.message(WorkerScheduleEdit.waiting_for_date_create)
+async def worker_schedule_create_process_date(msg: Message, state: FSMContext):
+    """Parse date and load schedule from Google Sheet (create mode)."""
+    if not _is_admin_worker(msg) or not msg.text:
+        return
+
+    tour_date = parse_date_ddmmyy(msg.text)
+    if not tour_date:
+        await msg.answer(
+            "❌ Неверный формат даты.\nПример правильного формата: 25.02.26"
+        )
+        return
+
+    await _load_and_save_worker_schedule(msg, state, tour_date, mode="create")
+
+
+@router.message(F.text == "✏️ Редактировать расписание")
+async def worker_schedule_edit_start(msg: Message, state: FSMContext):
+    """Start worker schedule edit: ask for date."""
+    if not _is_admin_worker(msg):
+        return
+
+    await state.clear()
+    await state.set_state(WorkerScheduleEdit.waiting_for_date_edit)
+    await msg.answer(
+        "✏️ Редактирование расписания работников.\n"
+        "Введите дату в формате ДД.ММ.ГГ"
+    )
+
+
+@router.message(WorkerScheduleEdit.waiting_for_date_edit)
+async def worker_schedule_edit_process_date(msg: Message, state: FSMContext):
+    """Parse date and load schedule from Google Sheet (edit mode)."""
+    if not _is_admin_worker(msg) or not msg.text:
+        return
+
+    tour_date = parse_date_ddmmyy(msg.text)
+    if not tour_date:
+        await msg.answer(
+            "❌ Неверный формат даты.\nПример правильного формата: 25.02.26"
+        )
+        return
+
+    await _load_and_save_worker_schedule(msg, state, tour_date, mode="edit")
+
+
+async def _load_and_save_worker_schedule(
+    msg: Message,
+    state: FSMContext,
+    tour_date: date,
+    mode: str,
+) -> None:
+    """Common flow: load CSV, parse, resolve workers, save to DB."""
+    await state.clear()
+
+    url = bot_settings.worker_schedule_sheet_csv_url
+    if not url:
+        await msg.answer(
+            "❌ Не настроена ссылка на таблицу расписания работников.\n"
+            "Добавьте WORKER_SCHEDULE_SHEET_CSV_URL в .env и перезапустите бота."
+        )
+        return
+
+    # Load CSV
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    await msg.answer(
+                        f"❌ Не удалось загрузить таблицу (HTTP {resp.status}). "
+                        "Попробуйте позже."
+                    )
+                    return
+                csv_text = await resp.text()
+    except Exception:
+        await msg.answer("❌ Ошибка при загрузке таблицы. Попробуйте позже.")
+        return
+
+    # Parse CSV
+    slots_raw, parse_errors = parse_worker_schedule_csv(csv_text)
+    if parse_errors:
+        text = "⚠️ Ошибки формата таблицы:\n\n" + "\n".join(parse_errors)
+        await msg.answer(text)
+        return
+
+    if not slots_raw:
+        await msg.answer("⚠️ В таблице не найдено ни одной строки расписания.")
+        return
+
+    # Resolve surnames to worker IDs
+    slots_resolved, resolve_errors = await resolve_worker_slots(slots_raw)
+    if resolve_errors:
+        text = "⚠️ Ошибки сопоставления фамилий с работниками:\n\n" + "\n".join(
+            resolve_errors
+        )
+        await msg.answer(text)
+        return
+
+    # Save to DB (non-break slots will be stored)
+    await save_worker_schedule_for_date(tour_date, slots_resolved)
+
+    weekday_full = get_weekday_full(tour_date)
+    day_month = get_date_day_month(tour_date)
+    total_slots = sum(1 for s in slots_resolved if not s.get("is_break"))
+
+    if mode == "create":
+        prefix = "✅ Расписание работников создано"
+    else:
+        prefix = "✅ Расписание работников обновлено"
+
+    await msg.answer(
+        f"{prefix} на {weekday_full}, {day_month}.\n"
+        f"Слотов: {total_slots}."
+    )

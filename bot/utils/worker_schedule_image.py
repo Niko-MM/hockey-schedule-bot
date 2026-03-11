@@ -8,6 +8,8 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
+from bot.utils.date_parser import get_weekday_full, get_date_day_month
+
 
 # Path to background (relative to this file: bot/utils/ -> bot/assets/)
 _ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
@@ -25,14 +27,16 @@ FONT_SIZE_HEADER = 18
 FONT_SIZE_CELL = 16
 COLUMN_WEIGHTS = (1.2, 1.2, 1.2, 1.2, 1.4, 1.2)  # relative widths for 6 columns
 # Semi-transparent table (alpha so background shows through)
-COLOR_HEADER_BG = (70, 70, 70, 200)
+COLOR_HEADER_BG = (70, 70, 70, 100)
 COLOR_HEADER_TEXT = (255, 255, 255)
-COLOR_ROW_BG = (255, 255, 255, 180)
-COLOR_ROW_ALT = (245, 245, 245, 180)
-COLOR_BREAK_BG = (220, 220, 220, 180)
+COLOR_ROW_BG = (255, 255, 255, 100)
+COLOR_ROW_ALT = (245, 245, 245, 100)
+COLOR_BREAK_BG = (220, 220, 220, 100)
 COLOR_OUTLINE = (50, 50, 50, 150)
 COLOR_OUTLINE_LIGHT = (200, 200, 200, 120)
 COLOR_TEXT = (40, 40, 40)
+COLOR_TITLE_WHITE = (255, 255, 255)
+COLOR_TITLE_STROKE = (0, 0, 0)
 
 
 def _find_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -52,10 +56,16 @@ def _find_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     return ImageFont.load_default()
 
 
+def _weekday_accusative(weekday_nom: str) -> str:
+    """Винительный падеж: Суббота -> Субботу, Среда -> Среду, ..."""
+    acc_map = {"Суббота": "Субботу", "Среда": "Среду", "Пятница": "Пятницу"}
+    return acc_map.get(weekday_nom, weekday_nom)
+
+
 def build_worker_schedule_image(
     tour_date: date,
     display_slots: list[dict[str, Any]],
-    title: str = "РАСПИСАНИЕ РАБОТНИКОВ",
+    title: str | None = None,
 ) -> bytes:
     """
     Draw schedule table on background image, return PNG bytes.
@@ -78,11 +88,30 @@ def build_worker_schedule_image(
     font_cell = _find_font(FONT_SIZE_CELL)
 
     y = MARGIN
-    # Title (left-aligned)
-    date_str = tour_date.strftime("%d.%m.%Y")
-    draw.text((MARGIN, y), title, fill=COLOR_TEXT, font=font_title, anchor="lt")
-    y += FONT_SIZE_TITLE + 8
-    draw.text((MARGIN, y), date_str, fill=COLOR_TEXT, font=font_cell, anchor="lt")
+    # Заголовок: дата и день недели — всегда tour_date (та дата, на которую админ создал расписание)
+    weekday = get_weekday_full(tour_date)
+    weekday_acc = _weekday_accusative(weekday)
+    title_line1 = title or f"Расписание работников на {weekday_acc} - {tour_date.day}"
+    date_line2 = get_date_day_month(tour_date)
+    draw.text(
+        (MARGIN, y),
+        title_line1,
+        fill=COLOR_TITLE_WHITE,
+        font=font_title,
+        anchor="lt",
+        stroke_width=2,
+        stroke_fill=COLOR_TITLE_STROKE,
+    )
+    y += FONT_SIZE_TITLE + 4
+    draw.text(
+        (MARGIN, y),
+        date_line2,
+        fill=COLOR_TITLE_WHITE,
+        font=font_cell,
+        anchor="lt",
+        stroke_width=1,
+        stroke_fill=COLOR_TITLE_STROKE,
+    )
     y += TITLE_HEIGHT
 
     # Column widths (by weight)

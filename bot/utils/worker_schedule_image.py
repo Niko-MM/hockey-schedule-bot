@@ -16,9 +16,9 @@ _ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 _BG_PNG = _ASSETS_DIR / "worker_schedule_bg.png"
 _BG_JPG = _ASSETS_DIR / "worker_schedule_bg.jpg"
 
-# Table layout (compact, table width 65% of image, centered)
+# Table layout (компактная ширина таблицы, фон обрезается по таблице)
 HEADER_ROW = ["Время", "Оператор", "Камера", "Ц.Камера", "Комментатор", "Судьи"]
-TABLE_WIDTH_RATIO = 0.65  # 65% of image width
+TABLE_WIDTH_RATIO = 0.52  # уже по ширине, обрезка фона привязана к таблице
 MARGIN = 24
 ROW_HEIGHT = 26
 HEADER_HEIGHT = 32
@@ -36,9 +36,10 @@ COLOR_HEADER_TEXT = (255, 255, 255)
 COLOR_ROW_BG = (255, 255, 255, 165)
 COLOR_ROW_ALT = (245, 245, 245, 165)
 COLOR_BREAK_BG = (220, 220, 220, 165)
-COLOR_OUTLINE = (50, 50, 50, 130)
-COLOR_OUTLINE_LIGHT = (200, 200, 200, 100)
-COLOR_TEXT = (40, 40, 40)
+# Чёрные линии и текст — читаемо, без «мути»
+COLOR_OUTLINE = (0, 0, 0, 220)
+COLOR_OUTLINE_LIGHT = (0, 0, 0, 180)
+COLOR_TEXT = (0, 0, 0)
 COLOR_TITLE_WHITE = (255, 255, 255)
 COLOR_TITLE_STROKE = (0, 0, 0)
 
@@ -173,8 +174,7 @@ def build_worker_schedule_image(
             slot.get("commentator") or "",
             slot.get("referee") or "",
         ]
-        if is_break and not any(cells[1:]):
-            cells[1] = "Перерыв"
+        # Перерыв — пустые строки, без надписи «Перерыв»
         for i, cell_text in enumerate(cells):
             x = x0 + sum(col_widths[:i])
             draw_table.rectangle(

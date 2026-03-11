@@ -18,6 +18,7 @@ from db.crud import get_all_workers, save_worker_schedule_for_date
 
 import aiohttp
 from datetime import date
+import re
 
 
 router = Router(name="workers_admin")
@@ -175,13 +176,15 @@ async def _load_and_save_worker_schedule(
     """Common flow: load CSV, parse, resolve workers, save to DB."""
     await state.clear()
 
-    url = bot_settings.worker_schedule_sheet_csv_url
-    if not url:
+    raw_url = bot_settings.worker_schedule_sheet_csv_url
+    if not raw_url:
         await msg.answer(
             "❌ Не настроена ссылка на таблицу расписания работников.\n"
             "Добавьте WORKER_SCHEDULE_SHEET_CSV_URL в .env и перезапустите бота."
         )
         return
+
+    url = _normalize_sheet_url(raw_url)
 
     # Load CSV
     try:
@@ -234,3 +237,33 @@ async def _load_and_save_worker_schedule(
         f"{prefix} на {weekday_full}, {day_month}.\n"
         f"Слотов: {total_slots}."
     )
+
+
+def _normalize_sheet_url(raw_url: str) -> str:
+    """
+    Normalize Google Sheets URL:
+    - If already export?format=csv -> return as is.
+    - If it's an /edit URL -> convert to /export?format=csv&gid=...
+    - Otherwise, best-effort fallback to /export?format=csv&gid=0.
+    """
+    url = raw_url.strip()
+    if "export?format=csv" in url:
+        return url
+
+    # Try to extract spreadsheet id and gid from typical edit URL
+    # Example: https://docs.google.com/spreadsheets/d/<ID>/edit#gid=0
+    m = re.search(r"/spreadsheets/d/([^/]+)/", url)
+    spreadsheet_id = m.group(1) if m else None
+
+    gid_match = re.search(r"[?#]gid=(\d+)", url)
+    gid = gid_match.group(1) if gid_match else "0"
+
+    if spreadsheet_id:
+        return f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export?format=csv&gid={gid}"
+
+    # Fallback: just append export params
+    if "/edit" in url:
+        base = url.split("/edit", 1)[0]
+    else:
+        base = url.rstrip("/")
+    return f"{base}/export?format=csv&gid={gid}"

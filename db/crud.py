@@ -63,6 +63,17 @@ async def get_person_by_id(person_id: int) -> Person | None:
         return result.scalar_one_or_none()
 
 
+async def get_person_surnames_by_ids(person_ids: list[int]) -> dict[int, str]:
+    """Get id -> surname for given person ids (for worker schedule image labels)."""
+    ids = [i for i in person_ids if i is not None]
+    if not ids:
+        return {}
+    async with async_session_maker() as session:
+        stmt = select(Person.id, Person.surname).where(Person.id.in_(ids))
+        result = await session.execute(stmt)
+        return {row[0]: row[1] or "" for row in result.all()}
+
+
 async def get_pending_applications() -> list[Person]:
     """Список заявок на вступление: не активные, не забаненные. По id (порядок поступления)."""
     async with async_session_maker() as session:

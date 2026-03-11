@@ -1,6 +1,6 @@
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import Message, BufferedInputFile
 
 from bot.config import bot_settings
 from bot.keyboards.admin.admin_player import get_personal_keyboard
@@ -14,7 +14,12 @@ from bot.utils.date_parser import parse_date_ddmmyy, get_weekday_full, get_date_
 from bot.utils.worker_schedule_parser import parse_worker_schedule_csv
 from bot.utils.worker_schedule_resolver import resolve_worker_slots
 from bot.handlers.user.salary import handle_salary, handle_ratings
-from db.crud import get_all_workers, save_worker_schedule_for_date
+from db.crud import (
+    get_all_workers,
+    save_worker_schedule_for_date,
+    get_person_surnames_by_ids,
+)
+from bot.utils.worker_schedule_image import build_worker_schedule_image
 
 import aiohttp
 from datetime import date
@@ -223,6 +228,37 @@ async def _load_and_save_worker_schedule(
 
     # Save to DB (non-break slots will be stored)
     await save_worker_schedule_for_date(tour_date, slots_resolved)
+
+    # Build display slots (id -> surname) for image
+    all_ids = []
+    for s in slots_resolved:
+        for key in ("operator_id", "camera_id", "camera_c_id", "commentator_id", "referee_id"):
+            pid = s.get(key)
+            if pid is not None:
+                all_ids.append(pid)
+    id_to_surname = await get_person_surnames_by_ids(all_ids)
+
+    display_slots = []
+    for s in slots_resolved:
+        display_slots.append({
+            "time_slot": s.get("time_slot") or "",
+            "operator": id_to_surname.get(s.get("operator_id"), ""),
+            "camera": id_to_surname.get(s.get("camera_id"), ""),
+            "camera_c": id_to_surname.get(s.get("camera_c_id"), ""),
+            "commentator": id_to_surname.get(s.get("commentator_id"), ""),
+            "referee": id_to_surname.get(s.get("referee_id"), ""),
+            "is_break": s.get("is_break", False),
+        })
+
+    try:
+        png_bytes = build_worker_schedule_image(tour_date, display_slots)
+        photo = BufferedInputFile(file=png_bytes, filename="schedule.png")
+        await msg.answer_photo(
+            photo=photo,
+            caption=f"Расписание работников на {get_weekday_full(tour_date)}, {get_date_day_month(tour_date)}.",
+        )
+    except Exception:
+        pass  # If image build fails, still send text below
 
     weekday_full = get_weekday_full(tour_date)
     day_month = get_date_day_month(tour_date)

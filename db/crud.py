@@ -4,6 +4,7 @@ from sqlalchemy import select, not_, delete, or_
 from db.models import DateTour
 from datetime import date, timedelta
 from sqlalchemy import func
+from typing import Any
 import re
 
 

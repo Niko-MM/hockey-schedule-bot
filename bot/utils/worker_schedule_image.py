@@ -91,7 +91,7 @@ def build_worker_schedule_image(
     # Заголовок: дата и день недели — всегда tour_date (та дата, на которую админ создал расписание)
     weekday = get_weekday_full(tour_date)
     weekday_acc = _weekday_accusative(weekday)
-    title_line1 = title or f"Расписание работников на {weekday_acc} - {tour_date.day}"
+    title_line1 = title or f"Расписание работников на {weekday_acc}"
     date_line2 = get_date_day_month(tour_date)
     draw.text(
         (MARGIN, y),
@@ -113,25 +113,31 @@ def build_worker_schedule_image(
         stroke_fill=COLOR_TITLE_STROKE,
     )
     y += TITLE_HEIGHT
+    table_y_start = y
 
     # Column widths (by weight)
     table_width = width - 2 * MARGIN
     total_w = sum(COLUMN_WEIGHTS)
     col_widths = [int(table_width * w / total_w) for w in COLUMN_WEIGHTS]
-    # Last column takes remainder
     col_widths[-1] = table_width - sum(col_widths[:-1])
     x0 = MARGIN
+
+    # Прозрачность таблицы: рисуем таблицу на отдельном RGBA-слое, затем compositing.
+    # В Pillow rectangle() на основном изображении не смешивает альфу — рисуем overlay и вставляем с маской.
+    overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw_table = ImageDraw.Draw(overlay)
+    y = table_y_start
 
     # Header row
     for i, label in enumerate(HEADER_ROW):
         x = x0 + sum(col_widths[:i])
         cx = x + col_widths[i] // 2
-        draw.rectangle(
+        draw_table.rectangle(
             [x, y, x + col_widths[i], y + HEADER_HEIGHT],
             fill=COLOR_HEADER_BG,
             outline=COLOR_OUTLINE,
         )
-        draw.text(
+        draw_table.text(
             (cx, y + HEADER_HEIGHT // 2),
             label,
             fill=COLOR_HEADER_TEXT,
@@ -157,12 +163,12 @@ def build_worker_schedule_image(
             cells[1] = "Перерыв"
         for i, cell_text in enumerate(cells):
             x = x0 + sum(col_widths[:i])
-            draw.rectangle(
+            draw_table.rectangle(
                 [x, y, x + col_widths[i], y + row_h],
                 fill=bg,
                 outline=COLOR_OUTLINE_LIGHT,
             )
-            draw.text(
+            draw_table.text(
                 (x + 6, y + row_h // 2),
                 str(cell_text)[:20],
                 fill=COLOR_TEXT,
@@ -170,6 +176,9 @@ def build_worker_schedule_image(
                 anchor="lm",
             )
         y += row_h
+
+    # Накладываем полупрозрачную таблицу на фон (альфа смешивается)
+    img = Image.alpha_composite(img, overlay)
 
     # Save to bytes (PNG supports RGBA)
     buf = io.BytesIO()

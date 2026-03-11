@@ -16,17 +16,19 @@ _ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 _BG_PNG = _ASSETS_DIR / "worker_schedule_bg.png"
 _BG_JPG = _ASSETS_DIR / "worker_schedule_bg.jpg"
 
-# Table layout (compact)
+# Table layout (compact, table width 65% of image, centered)
 HEADER_ROW = ["Время", "Оператор", "Камера", "Ц.Камера", "Комментатор", "Судьи"]
+TABLE_WIDTH_RATIO = 0.65  # 65% of image width
 MARGIN = 24
 ROW_HEIGHT = 26
 HEADER_HEIGHT = 32
 TITLE_HEIGHT = 38
 FONT_SIZE_TITLE = 22
 FONT_SIZE_HEADER = 14
-FONT_SIZE_CELL = 13
+FONT_SIZE_CELL = 15  # чуть крупнее для читаемости
 COLUMN_WEIGHTS = (1.2, 1.2, 1.2, 1.2, 1.4, 1.2)  # relative widths for 6 columns
 BOTTOM_MARGIN = 24
+COLOR_CELL_TEXT_STROKE = (0, 0, 0)  # обводка текста в ячейках для чёткости
 # Semi-transparent table (alpha 200 = заметно, но фон слегка просвечивает)
 COLOR_HEADER_BG = (70, 70, 70, 200)
 COLOR_HEADER_TEXT = (255, 255, 255)
@@ -88,14 +90,23 @@ def build_worker_schedule_image(
     font_header = _find_font(FONT_SIZE_HEADER)
     font_cell = _find_font(FONT_SIZE_CELL)
 
-    y = MARGIN
-    # Заголовок: дата и день недели — всегда tour_date (та дата, на которую админ создал расписание)
+    # Высота контента: заголовок + таблица, чтобы центрировать по вертикали (эмблема по центру)
+    title_block_h = MARGIN + FONT_SIZE_TITLE + 4 + FONT_SIZE_CELL + TITLE_HEIGHT
+    table_block_h = HEADER_HEIGHT + len(display_slots) * ROW_HEIGHT
+    content_height = title_block_h + table_block_h + BOTTOM_MARGIN
+    y_start = max(0, (height - content_height) // 2)
+
+    y = y_start + MARGIN
+    # Заголовок: дата и день недели — всегда tour_date
     weekday = get_weekday_full(tour_date)
     weekday_acc = _weekday_accusative(weekday)
     title_line1 = title or f"Расписание работников на {weekday_acc}"
     date_line2 = get_date_day_month(tour_date)
+    # Таблица по центру по горизонтали; заголовок текста — от левого края таблицы (x0 ниже)
+    table_width_px = int(width * TABLE_WIDTH_RATIO)
+    x0 = (width - table_width_px) // 2
     draw.text(
-        (MARGIN, y),
+        (x0, y),
         title_line1,
         fill=COLOR_TITLE_WHITE,
         font=font_title,
@@ -105,7 +116,7 @@ def build_worker_schedule_image(
     )
     y += FONT_SIZE_TITLE + 4
     draw.text(
-        (MARGIN, y),
+        (x0, y),
         date_line2,
         fill=COLOR_TITLE_WHITE,
         font=font_cell,
@@ -116,12 +127,11 @@ def build_worker_schedule_image(
     y += TITLE_HEIGHT
     table_y_start = y
 
-    # Column widths (by weight)
-    table_width = width - 2 * MARGIN
+    # Ширина таблицы 65%, колонки по весам
+    table_width = table_width_px
     total_w = sum(COLUMN_WEIGHTS)
     col_widths = [int(table_width * w / total_w) for w in COLUMN_WEIGHTS]
     col_widths[-1] = table_width - sum(col_widths[:-1])
-    x0 = MARGIN
 
     # Прозрачность таблицы: рисуем таблицу на отдельном RGBA-слое, затем compositing.
     # В Pillow rectangle() на основном изображении не смешивает альфу — рисуем overlay и вставляем с маской.
@@ -175,15 +185,17 @@ def build_worker_schedule_image(
                 fill=COLOR_TEXT,
                 font=font_cell,
                 anchor="lm",
+                stroke_width=1,
+                stroke_fill=COLOR_CELL_TEXT_STROKE,
             )
         y += row_h
 
     # Накладываем полупрозрачную таблицу на фон (альфа смешивается)
     img = Image.alpha_composite(img, overlay)
 
-    # Обрезаем по высоте контента — компактная картинка без пустого места внизу
-    crop_bottom = min(y + BOTTOM_MARGIN, height)
-    img = img.crop((0, 0, width, crop_bottom))
+    # Обрезаем по блоку контента (центрирован по вертикали — эмблема фона остаётся по центру)
+    crop_bottom = min(y_start + content_height, height)
+    img = img.crop((0, y_start, width, crop_bottom))
 
     # Save to bytes (PNG supports RGBA)
     buf = io.BytesIO()

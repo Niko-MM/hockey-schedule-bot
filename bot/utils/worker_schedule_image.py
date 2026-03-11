@@ -24,11 +24,14 @@ FONT_SIZE_TITLE = 28
 FONT_SIZE_HEADER = 18
 FONT_SIZE_CELL = 16
 COLUMN_WEIGHTS = (1.2, 1.2, 1.2, 1.2, 1.4, 1.2)  # relative widths for 6 columns
-COLOR_HEADER_BG = (70, 70, 70)
+# Semi-transparent table (alpha so background shows through)
+COLOR_HEADER_BG = (70, 70, 70, 200)
 COLOR_HEADER_TEXT = (255, 255, 255)
-COLOR_ROW_BG = (255, 255, 255)
-COLOR_ROW_ALT = (245, 245, 245)
-COLOR_BREAK_BG = (220, 220, 220)
+COLOR_ROW_BG = (255, 255, 255, 180)
+COLOR_ROW_ALT = (245, 245, 245, 180)
+COLOR_BREAK_BG = (220, 220, 220, 180)
+COLOR_OUTLINE = (50, 50, 50, 150)
+COLOR_OUTLINE_LIGHT = (200, 200, 200, 120)
 COLOR_TEXT = (40, 40, 40)
 
 
@@ -64,9 +67,9 @@ def build_worker_schedule_image(
     bg_path = _BG_PNG if _BG_PNG.exists() else _BG_JPG
     if not bg_path.exists():
         # No background: create white image 1000x1333
-        img = Image.new("RGB", (1000, 1333), color=(255, 255, 255))
+        img = Image.new("RGBA", (1000, 1333), color=(255, 255, 255, 255))
     else:
-        img = Image.open(bg_path).convert("RGB")
+        img = Image.open(bg_path).convert("RGBA")
     width, height = img.size
 
     draw = ImageDraw.Draw(img)
@@ -75,11 +78,11 @@ def build_worker_schedule_image(
     font_cell = _find_font(FONT_SIZE_CELL)
 
     y = MARGIN
-    # Title
+    # Title (left-aligned)
     date_str = tour_date.strftime("%d.%m.%Y")
-    draw.text((width // 2, y), title, fill=COLOR_TEXT, font=font_title, anchor="mt")
+    draw.text((MARGIN, y), title, fill=COLOR_TEXT, font=font_title, anchor="lt")
     y += FONT_SIZE_TITLE + 8
-    draw.text((width // 2, y), date_str, fill=COLOR_TEXT, font=font_cell, anchor="mt")
+    draw.text((MARGIN, y), date_str, fill=COLOR_TEXT, font=font_cell, anchor="lt")
     y += TITLE_HEIGHT
 
     # Column widths (by weight)
@@ -97,7 +100,7 @@ def build_worker_schedule_image(
         draw.rectangle(
             [x, y, x + col_widths[i], y + HEADER_HEIGHT],
             fill=COLOR_HEADER_BG,
-            outline=(50, 50, 50),
+            outline=COLOR_OUTLINE,
         )
         draw.text(
             (cx, y + HEADER_HEIGHT // 2),
@@ -128,7 +131,7 @@ def build_worker_schedule_image(
             draw.rectangle(
                 [x, y, x + col_widths[i], y + row_h],
                 fill=bg,
-                outline=(200, 200, 200),
+                outline=COLOR_OUTLINE_LIGHT,
             )
             draw.text(
                 (x + 6, y + row_h // 2),
@@ -139,7 +142,7 @@ def build_worker_schedule_image(
             )
         y += row_h
 
-    # Save to bytes
+    # Save to bytes (PNG supports RGBA)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()

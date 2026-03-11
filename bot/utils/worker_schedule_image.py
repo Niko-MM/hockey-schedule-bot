@@ -28,23 +28,26 @@ FONT_SIZE_HEADER = 14
 FONT_SIZE_CELL = 15  # чуть крупнее для читаемости
 COLUMN_WEIGHTS = (1.2, 1.2, 1.2, 1.2, 1.4, 1.2)  # relative widths for 6 columns
 BOTTOM_MARGIN = 24
-COLOR_CELL_TEXT_STROKE = (0, 0, 0)  # обводка текста в ячейках для чёткости
-# Semi-transparent table (alpha 200 = заметно, но фон слегка просвечивает)
-COLOR_HEADER_BG = (70, 70, 70, 200)
+# Горизонтальная обрезка: отступы как по вертикали, чуть больше для пропорций
+H_CROP_MARGIN = 28
+# Таблица чуть прозрачнее (alpha 165), фон просвечивает сильнее
+COLOR_HEADER_BG = (70, 70, 70, 165)
 COLOR_HEADER_TEXT = (255, 255, 255)
-COLOR_ROW_BG = (255, 255, 255, 200)
-COLOR_ROW_ALT = (245, 245, 245, 200)
-COLOR_BREAK_BG = (220, 220, 220, 200)
-COLOR_OUTLINE = (50, 50, 50, 150)
-COLOR_OUTLINE_LIGHT = (200, 200, 200, 120)
+COLOR_ROW_BG = (255, 255, 255, 165)
+COLOR_ROW_ALT = (245, 245, 245, 165)
+COLOR_BREAK_BG = (220, 220, 220, 165)
+COLOR_OUTLINE = (50, 50, 50, 130)
+COLOR_OUTLINE_LIGHT = (200, 200, 200, 100)
 COLOR_TEXT = (40, 40, 40)
 COLOR_TITLE_WHITE = (255, 255, 255)
 COLOR_TITLE_STROKE = (0, 0, 0)
 
 
 def _find_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    """Try system fonts that support Cyrillic, fallback to default."""
+    """Пробуем более лёгкие шрифты (Condensed/Light), затем обычные — чтобы текст не выглядел тяжёлым."""
     candidates = [
+        _ASSETS_DIR / "DejaVuSansCondensed.ttf",
+        Path("/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed.ttf"),
         _ASSETS_DIR / "DejaVuSans.ttf",
         Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
         Path("/System/Library/Fonts/Supplemental/Arial Unicode.ttf"),
@@ -111,7 +114,7 @@ def build_worker_schedule_image(
         fill=COLOR_TITLE_WHITE,
         font=font_title,
         anchor="lt",
-        stroke_width=2,
+        stroke_width=1,
         stroke_fill=COLOR_TITLE_STROKE,
     )
     y += FONT_SIZE_TITLE + 4
@@ -121,7 +124,7 @@ def build_worker_schedule_image(
         fill=COLOR_TITLE_WHITE,
         font=font_cell,
         anchor="lt",
-        stroke_width=1,
+        stroke_width=0,
         stroke_fill=COLOR_TITLE_STROKE,
     )
     y += TITLE_HEIGHT
@@ -185,17 +188,17 @@ def build_worker_schedule_image(
                 fill=COLOR_TEXT,
                 font=font_cell,
                 anchor="lm",
-                stroke_width=1,
-                stroke_fill=COLOR_CELL_TEXT_STROKE,
             )
         y += row_h
 
     # Накладываем полупрозрачную таблицу на фон (альфа смешивается)
     img = Image.alpha_composite(img, overlay)
 
-    # Обрезаем по блоку контента (центрирован по вертикали — эмблема фона остаётся по центру)
+    # Обрезка по блоку контента: по вертикали и по горизонтали (таблица — главное, отступы как по вертикали, чуть больше)
     crop_bottom = min(y_start + content_height, height)
-    img = img.crop((0, y_start, width, crop_bottom))
+    crop_left = max(0, x0 - H_CROP_MARGIN)
+    crop_right = min(width, x0 + table_width + H_CROP_MARGIN)
+    img = img.crop((crop_left, y_start, crop_right, crop_bottom))
 
     # Save to bytes (PNG supports RGBA)
     buf = io.BytesIO()

@@ -9,9 +9,9 @@ from db.crud import get_all_workers, _normalize_for_search  # type: ignore[attr-
 ROLE_FIELD_KEYS = [
     ("operator", "Оператор"),
     ("camera", "Камера"),
-    ("camera_c", "К-центр"),
+    ("camera_c", "Ц.Камера"),
     ("commentator", "Комментатор"),
-    ("referee", "Судья"),
+    ("referee", "Судьи"),
 ]
 
 

@@ -16,22 +16,23 @@ _ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 _BG_PNG = _ASSETS_DIR / "worker_schedule_bg.png"
 _BG_JPG = _ASSETS_DIR / "worker_schedule_bg.jpg"
 
-# Table layout
+# Table layout (compact)
 HEADER_ROW = ["Время", "Оператор", "Камера", "Ц.Камера", "Комментатор", "Судьи"]
-MARGIN = 40
-ROW_HEIGHT = 36
-HEADER_HEIGHT = 44
-TITLE_HEIGHT = 56
-FONT_SIZE_TITLE = 28
-FONT_SIZE_HEADER = 18
-FONT_SIZE_CELL = 16
+MARGIN = 24
+ROW_HEIGHT = 26
+HEADER_HEIGHT = 32
+TITLE_HEIGHT = 38
+FONT_SIZE_TITLE = 22
+FONT_SIZE_HEADER = 14
+FONT_SIZE_CELL = 13
 COLUMN_WEIGHTS = (1.2, 1.2, 1.2, 1.2, 1.4, 1.2)  # relative widths for 6 columns
-# Semi-transparent table (alpha so background shows through)
-COLOR_HEADER_BG = (70, 70, 70, 100)
+BOTTOM_MARGIN = 24
+# Semi-transparent table (alpha 200 = заметно, но фон слегка просвечивает)
+COLOR_HEADER_BG = (70, 70, 70, 200)
 COLOR_HEADER_TEXT = (255, 255, 255)
-COLOR_ROW_BG = (255, 255, 255, 100)
-COLOR_ROW_ALT = (245, 245, 245, 100)
-COLOR_BREAK_BG = (220, 220, 220, 100)
+COLOR_ROW_BG = (255, 255, 255, 200)
+COLOR_ROW_ALT = (245, 245, 245, 200)
+COLOR_BREAK_BG = (220, 220, 220, 200)
 COLOR_OUTLINE = (50, 50, 50, 150)
 COLOR_OUTLINE_LIGHT = (200, 200, 200, 120)
 COLOR_TEXT = (40, 40, 40)
@@ -179,6 +180,10 @@ def build_worker_schedule_image(
 
     # Накладываем полупрозрачную таблицу на фон (альфа смешивается)
     img = Image.alpha_composite(img, overlay)
+
+    # Обрезаем по высоте контента — компактная картинка без пустого места внизу
+    crop_bottom = min(y + BOTTOM_MARGIN, height)
+    img = img.crop((0, 0, width, crop_bottom))
 
     # Save to bytes (PNG supports RGBA)
     buf = io.BytesIO()

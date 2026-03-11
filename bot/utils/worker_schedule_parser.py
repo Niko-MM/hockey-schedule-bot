@@ -60,7 +60,14 @@ def parse_worker_schedule_csv(csv_text: str) -> tuple[list[dict[str, Any]], list
     if not csv_text.strip():
         return slots, errors
 
-    reader = csv.reader(io.StringIO(csv_text))
+    # Detect delimiter (Google Sheets can export with ',' or ';' or tab)
+    sample = csv_text[:1024]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+        reader = csv.reader(io.StringIO(csv_text), dialect)
+    except Exception:
+        # Fallback to comma
+        reader = csv.reader(io.StringIO(csv_text))
 
     row_index = 0
     for raw_row in reader:

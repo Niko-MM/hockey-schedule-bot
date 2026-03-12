@@ -30,12 +30,12 @@ COLUMN_WEIGHTS = (1.2, 1.2, 1.2, 1.2, 1.4, 1.2)  # relative widths for 6 columns
 BOTTOM_MARGIN = 26  # + ~10% нижний отступ
 # Горизонтальная обрезка: отступы как по вертикали, чуть больше для пропорций
 H_CROP_MARGIN = 28
-# Таблица чуть прозрачнее (alpha 150), фон просвечивает; фон ячеек снова белый/почти белый
-COLOR_HEADER_BG = (70, 70, 70, 150)
+# Таблица более яркая и контрастная (чуть менее прозрачная)
+COLOR_HEADER_BG = (70, 70, 70, 190)
 COLOR_HEADER_TEXT = (255, 255, 255)
-COLOR_ROW_BG = (255, 255, 255, 150)  # белый фон строк
-COLOR_ROW_ALT = (245, 245, 245, 150)  # лёгкая зебра
-COLOR_BREAK_BG = (230, 230, 230, 150)  # фон перерыва чуть серее
+COLOR_ROW_BG = (255, 255, 255, 200)  # почти непрозрачный белый фон строк
+COLOR_ROW_ALT = (248, 248, 248, 200)  # очень лёгкая зебра
+COLOR_BREAK_BG = (235, 235, 235, 200)  # перерыв чуть серее, но тоже яркий
 # Чёрные линии и текст — читаемо, без «мути»
 COLOR_OUTLINE = (0, 0, 0, 220)
 COLOR_OUTLINE_LIGHT = (0, 0, 0, 180)
@@ -93,6 +93,7 @@ def build_worker_schedule_image(
         # No background: create white image 1000x1333
         img = Image.new("RGBA", (1000, 1333), color=(255, 255, 255, 255))
     else:
+        # Используем фон как есть, без изменения яркости
         img = Image.open(bg_path).convert("RGBA")
     width, height = img.size
 

@@ -257,8 +257,9 @@ async def _load_and_save_worker_schedule(
             photo=photo,
             caption=f"Расписание работников на {get_weekday_full(tour_date)}, {get_date_day_month(tour_date)}.",
         )
-    except Exception:
-        pass  # If image build fails, still send text below
+    except Exception as e:
+        # Показываем админу текст ошибки, чтобы было понятно, почему не пришла картинка
+        await msg.answer(f"⚠️ Ошибка при генерации картинки расписания работников: {e}")
 
     weekday_full = get_weekday_full(tour_date)
     day_month = get_date_day_month(tour_date)

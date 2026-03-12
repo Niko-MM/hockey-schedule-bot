@@ -470,6 +470,26 @@ async def save_worker_schedule_for_date(
     - 'camera_id' is stored as director_id, 'camera_c_id' as k_center_id.
     """
     async with async_session_maker() as session:
+        # На лету добавляем колонку is_published, если её ещё нет в существующей БД (SQLite).
+        # Это защищает от падений после обновления модели без отдельной миграции.
+        try:
+            from sqlalchemy import text
+
+            await session.execute(text("PRAGMA table_info('worker_schedule')"))
+            info = await session.execute(text("PRAGMA table_info('worker_schedule')"))
+            columns = [row[1] for row in info.fetchall()]
+            if "is_published" not in columns:
+                await session.execute(
+                    text(
+                        "ALTER TABLE worker_schedule "
+                        "ADD COLUMN is_published BOOLEAN NOT NULL DEFAULT 0"
+                    )
+                )
+                await session.commit()
+        except Exception:
+            # Если по какой-то причине не удалось проверить/создать колонку,
+            # продолжаем — ошибка проявится ниже и будет видна в логах.
+            pass
         # Get or create DateTour
         stmt_date = select(DateTour).where(DateTour.date == tour_date)
         result = await session.execute(stmt_date)

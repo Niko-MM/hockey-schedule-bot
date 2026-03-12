@@ -624,7 +624,13 @@ async def delete_worker_schedule_draft_for_date(tour_date: date) -> int:
             )
         )
         await session.commit()
-        return result_del.rowcount or 0
+        # В разных версиях SQLAlchemy rowcount может быть None или недоступен.
+        # Возвращаем 0 по умолчанию, если информации о количестве строк нет.
+        try:
+            deleted = getattr(result_del, "rowcount", None)
+        except Exception:
+            deleted = None
+        return deleted or 0
 
 
 async def get_active_workers_telegram_ids() -> list[int]:

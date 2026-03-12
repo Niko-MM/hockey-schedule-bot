@@ -25,17 +25,17 @@ HEADER_HEIGHT = 32
 TITLE_HEIGHT = 38
 FONT_SIZE_TITLE = 22
 FONT_SIZE_HEADER = 14
-FONT_SIZE_CELL = 15  # чуть крупнее для читаемости
+FONT_SIZE_CELL = 16  # + ~7% к прежнему размеру фамилий для лучшей читаемости
 COLUMN_WEIGHTS = (1.2, 1.2, 1.2, 1.2, 1.4, 1.2)  # relative widths for 6 columns
 BOTTOM_MARGIN = 26  # + ~10% нижний отступ
 # Горизонтальная обрезка: отступы как по вертикали, чуть больше для пропорций
 H_CROP_MARGIN = 28
-# Таблица чуть прозрачнее (alpha 150, ещё на ~5% прозрачнее, фон сильнее просвечивает)
+# Таблица чуть прозрачнее (alpha 150), фон просвечивает; фон ячеек снова белый/почти белый
 COLOR_HEADER_BG = (70, 70, 70, 150)
 COLOR_HEADER_TEXT = (255, 255, 255)
-COLOR_ROW_BG = (217, 217, 217, 150)  # белый потемнее на ~15%
-COLOR_ROW_ALT = (208, 208, 208, 150)  # серый потемнее на ~15%
-COLOR_BREAK_BG = (187, 187, 187, 150)  # фон перерыва тоже темнее
+COLOR_ROW_BG = (255, 255, 255, 150)  # белый фон строк
+COLOR_ROW_ALT = (245, 245, 245, 150)  # лёгкая зебра
+COLOR_BREAK_BG = (230, 230, 230, 150)  # фон перерыва чуть серее
 # Чёрные линии и текст — читаемо, без «мути»
 COLOR_OUTLINE = (0, 0, 0, 220)
 COLOR_OUTLINE_LIGHT = (0, 0, 0, 180)
@@ -45,8 +45,15 @@ COLOR_TITLE_STROKE = (0, 0, 0)
 
 
 def _find_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    """Пробуем более лёгкие шрифты (Condensed/Light), затем обычные — чтобы текст не выглядел тяжёлым."""
+    """
+    Подбираем шрифт для заголовков и фамилий.
+    В приоритете Inter (нужно положить TTF в bot/assets), затем системные альтернативы.
+    """
     candidates = [
+        _ASSETS_DIR / "Inter-Regular.ttf",
+        _ASSETS_DIR / "Inter.ttf",
+        Path("/usr/share/fonts/truetype/inter/Inter-Regular.ttf"),
+        Path("/usr/share/fonts/truetype/inter/Inter.ttf"),
         _ASSETS_DIR / "DejaVuSansCondensed.ttf",
         Path("/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed.ttf"),
         _ASSETS_DIR / "DejaVuSans.ttf",

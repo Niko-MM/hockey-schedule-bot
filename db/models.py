@@ -73,6 +73,9 @@ class WorkerSchedule(Base):
     commentator_id: Mapped[int] = mapped_column(ForeignKey("person.id"))
     referee_id: Mapped[int] = mapped_column(ForeignKey("person.id"))
 
+    # Draft / published status: False = черновик, True = опубликовано
+    is_published: Mapped[bool] = mapped_column(default=False)
+
 
 class SalaryPeriodClosed(Base):
     """Закрытый период зарплаты: после «Расчёт» админом долг за этот период не показывается."""

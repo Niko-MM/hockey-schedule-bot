@@ -1,6 +1,6 @@
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, BufferedInputFile
+from aiogram.types import Message, BufferedInputFile, CallbackQuery
 
 from bot.config import bot_settings
 from bot.keyboards.admin.admin_player import get_personal_keyboard
@@ -8,6 +8,9 @@ from bot.keyboards.admin.admin_worker import (
     get_admin_worker_main_keyboard,
     get_worker_schedule_keyboard,
     get_worker_control_keyboard,
+)
+from bot.keyboards.admin.worker_schedule_publish import (
+    get_worker_schedule_publish_keyboard,
 )
 from bot.states.worker_schedule import WorkerScheduleEdit
 from bot.utils.date_parser import parse_date_ddmmyy, get_weekday_full, get_date_day_month
@@ -18,6 +21,9 @@ from db.crud import (
     get_all_workers,
     save_worker_schedule_for_date,
     get_person_surnames_by_ids,
+    publish_worker_schedule_for_date,
+    delete_worker_schedule_draft_for_date,
+    get_active_workers_telegram_ids,
 )
 from bot.utils.worker_schedule_image import build_worker_schedule_image
 
@@ -226,8 +232,8 @@ async def _load_and_save_worker_schedule(
         await msg.answer(text)
         return
 
-    # Save to DB (non-break slots will be stored)
-    await save_worker_schedule_for_date(tour_date, slots_resolved)
+    # Save to DB как ЧЕРНОВИК (non-break slots will be stored, is_published=False)
+    await save_worker_schedule_for_date(tour_date, slots_resolved, is_published=False)
 
     # Build display slots (id -> surname) for image
     all_ids = []
@@ -255,7 +261,11 @@ async def _load_and_save_worker_schedule(
         photo = BufferedInputFile(file=png_bytes, filename="schedule.png")
         await msg.answer_photo(
             photo=photo,
-            caption=f"Расписание работников на {get_weekday_full(tour_date)}, {get_date_day_month(tour_date)}.",
+            caption=(
+                f"Черновик расписания работников на "
+                f"{get_weekday_full(tour_date)}, {get_date_day_month(tour_date)}."
+            ),
+            reply_markup=get_worker_schedule_publish_keyboard(tour_date),
         )
     except Exception as e:
         # Показываем админу текст ошибки, чтобы было понятно, почему не пришла картинка
@@ -274,6 +284,97 @@ async def _load_and_save_worker_schedule(
         f"{prefix} на {weekday_full}, {day_month}.\n"
         f"Слотов: {total_slots}."
     )
+
+
+@router.callback_query(F.data.startswith("worker_sched:"))
+async def worker_schedule_publish_callback(
+    callback: CallbackQuery,
+    state: FSMContext,
+) -> None:
+    """Обработка инлайн‑кнопок под картинкой расписания работников."""
+    if not callback.from_user or callback.from_user.id != bot_settings.admin_worker:
+        await callback.answer()
+        return
+
+    data = callback.data or ""
+    try:
+        _, action, date_str = data.split(":", 2)
+        tour_date = date.fromisoformat(date_str)
+    except Exception:
+        await callback.answer("Некорректные данные для действия.", show_alert=True)
+        return
+
+    # Опубликовать: перевести черновик в опубликованное и разослать всем работникам
+    if action == "publish":
+        slots_published = await publish_worker_schedule_for_date(tour_date)
+        if slots_published == 0:
+            await callback.answer(
+                "Нет черновика расписания на эту дату (возможно, уже опубликовано или удалено).",
+                show_alert=True,
+            )
+            return
+
+        weekday_full = get_weekday_full(tour_date)
+        day_month = get_date_day_month(tour_date)
+        caption = (
+            f"Расписание работников на {weekday_full}, {day_month}."
+        )
+
+        # Переиспользуем уже загруженное в Telegram фото по file_id
+        if not callback.message or not callback.message.photo:
+            await callback.answer("Не удалось найти изображение для отправки.", show_alert=True)
+            return
+
+        file_id = callback.message.photo[-1].file_id
+        worker_ids = await get_active_workers_telegram_ids()
+
+        sent = 0
+        for tg_id in worker_ids:
+            try:
+                await callback.bot.send_photo(
+                    chat_id=tg_id,
+                    photo=file_id,
+                    caption=caption,
+                )
+                sent += 1
+            except Exception:
+                # Игнорируем ошибки отправки отдельным пользователям
+                continue
+
+        # Убираем кнопки, чтобы не нажимать повторно
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+
+        await callback.answer(f"Опубликовано. Сообщение отправлено {sent} работникам.", show_alert=True)
+        return
+
+    # Заменить: снова подтянуть расписание из таблицы и пересоздать ЧЕРНОВИК
+    if action == "replace":
+        await _load_and_save_worker_schedule(
+            msg=callback.message,
+            state=state,
+            tour_date=tour_date,
+            mode="edit",
+        )
+        await callback.answer("Черновик расписания обновлён из таблицы.", show_alert=False)
+        return
+
+    # Отменить: удалить черновик
+    if action == "cancel":
+        deleted = await delete_worker_schedule_draft_for_date(tour_date)
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        if deleted:
+            await callback.answer("Черновик расписания удалён, ничего не опубликовано.", show_alert=True)
+        else:
+            await callback.answer("Черновика уже не было (возможно, ранее опубликован).", show_alert=True)
+        return
+
+    await callback.answer("Неизвестное действие.", show_alert=True)
 
 
 def _normalize_sheet_url(raw_url: str) -> str:

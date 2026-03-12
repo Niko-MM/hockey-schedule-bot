@@ -457,12 +457,15 @@ async def get_last_schedule_dates(limit: int = 10) -> list[date]:
 async def save_worker_schedule_for_date(
     tour_date: date,
     slots: list[dict[str, Any]],
+    *,
+    is_published: bool = False,
 ) -> None:
     """
     Save worker schedule for a given date.
 
     - Get or create DateTour for tour_date.
-    - Remove existing WorkerSchedule rows for this date.
+    - Remove existing WorkerSchedule rows for this date *с тем же статусом публикации*
+      (черновики отдельно от опубликованных).
     - Insert new rows for non-break slots in the order they are given.
     - 'camera_id' is stored as director_id, 'camera_c_id' as k_center_id.
     """
@@ -477,10 +480,11 @@ async def save_worker_schedule_for_date(
             session.add(date_tour)
             await session.flush()
 
-        # Remove existing worker schedule for this date
+        # Remove existing worker schedule for this date with the same publication status
         await session.execute(
             delete(WorkerSchedule).where(
-                WorkerSchedule.date_tour_id == date_tour.id
+                WorkerSchedule.date_tour_id == date_tour.id,
+                WorkerSchedule.is_published.is_(is_published),
             )
         )
 
@@ -501,10 +505,81 @@ async def save_worker_schedule_for_date(
                 k_center_id=slot.get("camera_c_id"),
                 commentator_id=slot.get("commentator_id"),
                 referee_id=slot.get("referee_id"),
+                is_published=is_published,
             )
             session.add(ws)
 
         await session.commit()
+
+
+async def publish_worker_schedule_for_date(tour_date: date) -> int:
+    """
+    Переводит все черновые слоты расписания работников на дату в статус опубликованных.
+
+    Возвращает количество опубликованных слотов.
+    """
+    async with async_session_maker() as session:
+        stmt_date = select(DateTour).where(DateTour.date == tour_date)
+        result = await session.execute(stmt_date)
+        date_tour = result.scalar_one_or_none()
+        if not date_tour:
+            return 0
+
+        stmt_ws = select(WorkerSchedule).where(
+            WorkerSchedule.date_tour_id == date_tour.id,
+            WorkerSchedule.is_published.is_(False),
+        )
+        result_ws = await session.execute(stmt_ws)
+        drafts = list(result_ws.scalars().all())
+        if not drafts:
+            return 0
+
+        for ws in drafts:
+            ws.is_published = True
+
+        await session.commit()
+        return len(drafts)
+
+
+async def delete_worker_schedule_draft_for_date(tour_date: date) -> int:
+    """
+    Удаляет все черновые слоты расписания работников на указанную дату.
+    Возвращает количество удалённых строк.
+    """
+    async with async_session_maker() as session:
+        stmt_date = select(DateTour).where(DateTour.date == tour_date)
+        result = await session.execute(stmt_date)
+        date_tour = result.scalar_one_or_none()
+        if not date_tour:
+            return 0
+
+        result_del = await session.execute(
+            delete(WorkerSchedule).where(
+                WorkerSchedule.date_tour_id == date_tour.id,
+                WorkerSchedule.is_published.is_(False),
+            )
+        )
+        await session.commit()
+        return result_del.rowcount or 0
+
+
+async def get_active_workers_telegram_ids() -> list[int]:
+    """
+    Telegram IDs of all active workers (for notifications).
+    Excludes banned and persons without telegram_id.
+    """
+    async with async_session_maker() as session:
+        stmt = (
+            select(Person.telegram_id)
+            .where(
+                Person.is_active,
+                Person.is_worker,
+                not_(Person.is_banned),
+                Person.telegram_id.is_not(None),
+            )
+        )
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
 
 
 async def find_player_by_surname(

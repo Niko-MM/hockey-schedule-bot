@@ -454,6 +454,50 @@ async def get_last_schedule_dates(limit: int = 10) -> list[date]:
         return [row[0] for row in result.all()]
 
 
+async def get_latest_published_worker_schedule_date() -> date | None:
+    """
+    Последняя дата, на которую есть опубликованное расписание работников.
+    Используется для просмотра актуального расписания админами.
+    """
+    async with async_session_maker() as session:
+        stmt = (
+            select(DateTour.date)
+            .join(WorkerSchedule, WorkerSchedule.date_tour_id == DateTour.id)
+            .where(WorkerSchedule.is_published.is_(True))
+            .order_by(DateTour.date.desc())
+            .limit(1)
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
+
+
+async def get_worker_schedule_rows_for_date(
+    tour_date: date,
+    *,
+    only_published: bool = True,
+) -> list[WorkerSchedule]:
+    """
+    Все записи расписания работников на указанную дату.
+    По умолчанию возвращаются только опубликованные строки.
+    """
+    async with async_session_maker() as session:
+        stmt_date = select(DateTour).where(DateTour.date == tour_date)
+        result = await session.execute(stmt_date)
+        date_tour = result.scalar_one_or_none()
+        if not date_tour:
+            return []
+
+        stmt_ws = select(WorkerSchedule).where(
+            WorkerSchedule.date_tour_id == date_tour.id,
+        )
+        if only_published:
+            stmt_ws = stmt_ws.where(WorkerSchedule.is_published.is_(True))
+        stmt_ws = stmt_ws.order_by(WorkerSchedule.match_number)
+
+        result_ws = await session.execute(stmt_ws)
+        return list(result_ws.scalars().all())
+
+
 async def save_worker_schedule_for_date(
     tour_date: date,
     slots: list[dict[str, Any]],

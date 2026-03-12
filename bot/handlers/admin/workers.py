@@ -17,6 +17,7 @@ from bot.utils.date_parser import parse_date_ddmmyy, get_weekday_full, get_date_
 from bot.utils.worker_schedule_parser import parse_worker_schedule_csv
 from bot.utils.worker_schedule_resolver import resolve_worker_slots
 from bot.handlers.user.salary import handle_salary, handle_ratings
+from bot.handlers.user.schedule import handle_user_schedule
 from db.crud import (
     get_all_workers,
     save_worker_schedule_for_date,
@@ -116,6 +117,57 @@ async def admin_worker_my_ratings(msg: Message):
         return
 
     await handle_ratings(msg)
+
+
+@router.message(F.from_user.id == bot_settings.admin_worker, F.text == "👥 Расписание игроков")
+async def admin_worker_view_players_schedule(msg: Message, state: FSMContext):
+    """
+    Админ работников смотрит актуальное расписание игроков.
+    Используем тот же сценарий, что и для пользователя-игрока,
+    но без проверки роли.
+    """
+    if not _is_admin_worker(msg):
+        return
+
+    # Переиспользуем handler пользователя, он сам определит актуальную дату и соберёт текст.
+    # Игнорируем роль (админ работников может не быть игроком), поэтому вызываем напрямую,
+    # но временно подменять проверки не будем — проще слегка адаптировать логику здесь.
+    from db.crud import (
+        get_next_tour_date_for_players,
+        get_date_tour_by_date,
+        get_tours_by_date_tour_id,
+    )
+    from bot.services.schedule_notifications import build_player_schedule_message
+
+    tour_date = await get_next_tour_date_for_players()
+    if not tour_date:
+        await msg.answer("Ближайших игровых дней пока нет.")
+        return
+
+    date_tour = await get_date_tour_by_date(tour_date)
+    if not date_tour:
+        await msg.answer("Ближайших игровых дней пока нет.")
+        return
+
+    db_tours = await get_tours_by_date_tour_id(date_tour.id)
+    if not db_tours:
+        await msg.answer("Ближайших игровых дней пока нет.")
+        return
+
+    tours = [
+        {
+            "time": t.time,
+            "games": t.games,
+            "teams_count": t.teams_count,
+            "team_1_composition": t.team_1_composition or "",
+            "team_2_composition": t.team_2_composition or "",
+            "team_3_composition": t.team_3_composition,
+        }
+        for t in db_tours
+    ]
+
+    text = build_player_schedule_message(tour_date, tours)
+    await msg.answer(text)
 
 
 @router.message(F.text == "➕ Составить расписание")

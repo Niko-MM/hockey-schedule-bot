@@ -178,6 +178,10 @@ async def admin_salary_confirm(callback: CallbackQuery, bot: Bot):
     if not callback.from_user or callback.from_user.id != bot_settings.admin_players:
         await callback.answer()
         return
+    
+    if not callback.data:
+        await callback.answer()
+        return
 
     try:
         period_iso = callback.data.split(":", 1)[1]

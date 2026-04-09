@@ -624,7 +624,8 @@ async def delete_worker_schedule_draft_for_date(tour_date: date) -> int:
             )
         )
         await session.commit()
-        return result_del.rowcount or 0
+        rowcount = getattr(result_del, "rowcount", None)
+        return int(rowcount) if rowcount is not None else 0
 
 
 async def get_active_workers_telegram_ids() -> list[int]:

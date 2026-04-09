@@ -58,7 +58,7 @@ async def admin_worker_control_button(msg: Message):
     await msg.answer("⚙️ Управление", reply_markup=await get_worker_control_keyboard())
 
 
-@router.message(F.text == "👷 Работники")
+@router.message(F.from_user.id == bot_settings.admin_worker, F.text == "👷 Работники")
 async def admin_workers_list_button(msg: Message):
     """List workers in the league (no numbering)."""
     if not _is_admin_worker(msg):
@@ -92,7 +92,7 @@ async def admin_workers_list_button(msg: Message):
             await msg.answer("\n".join(chunk))
 
 
-@router.message(F.text == "👤 Личное")
+@router.message(F.from_user.id == bot_settings.admin_worker, F.text == "👤 Личное")
 async def admin_worker_personal_button(msg: Message):
     """Show personal menu for worker admin (shared with other admins)."""
     if not _is_admin_worker(msg):
@@ -101,7 +101,7 @@ async def admin_worker_personal_button(msg: Message):
     await msg.answer("👤 Личное", reply_markup=await get_personal_keyboard())
 
 
-@router.message(F.text == "💰 Моя зарплата")
+@router.message(F.from_user.id == bot_settings.admin_worker, F.text == "💰 Моя зарплата")
 async def admin_worker_my_salary(msg: Message):
     """Worker admin checks own salary same as regular user."""
     if not _is_admin_worker(msg):
@@ -110,7 +110,7 @@ async def admin_worker_my_salary(msg: Message):
     await handle_salary(msg)
 
 
-@router.message(F.text == "🏆 Рейтинги")
+@router.message(F.from_user.id == bot_settings.admin_worker, F.text == "🏆 Рейтинги")
 async def admin_worker_my_ratings(msg: Message):
     """Worker admin checks ratings same as regular user."""
     if not _is_admin_worker(msg):
@@ -170,7 +170,7 @@ async def admin_worker_view_players_schedule(msg: Message, state: FSMContext):
     await msg.answer(text)
 
 
-@router.message(F.text == "➕ Составить расписание")
+@router.message(F.from_user.id == bot_settings.admin_worker, F.text == "➕ Составить расписание")
 async def worker_schedule_create_start(msg: Message, state: FSMContext):
     """Start worker schedule creation: ask for date."""
     if not _is_admin_worker(msg):
@@ -200,7 +200,7 @@ async def worker_schedule_create_process_date(msg: Message, state: FSMContext):
     await _load_and_save_worker_schedule(msg, state, tour_date, mode="create")
 
 
-@router.message(F.text == "✏️ Редактировать расписание")
+@router.message(F.from_user.id == bot_settings.admin_worker, F.text == "✏️ Редактировать расписание")
 async def worker_schedule_edit_start(msg: Message, state: FSMContext):
     """Start worker schedule edit: ask for date."""
     if not _is_admin_worker(msg):

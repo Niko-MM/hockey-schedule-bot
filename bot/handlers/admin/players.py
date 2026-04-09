@@ -24,7 +24,6 @@ from db.crud import (
     get_worker_schedule_rows_for_date,
 )
 from bot.utils.periods import get_previous_two_week_period
-from bot.utils.worker_schedule_image import build_worker_schedule_image
 
 
 router = Router(name="players")
@@ -242,7 +241,7 @@ async def admin_salary_cancel(callback: CallbackQuery):
 
 @router.message(F.from_user.id == bot_settings.admin_players, F.text == "👷 Расписание работников")
 async def admin_view_worker_schedule(msg: Message):
-    """Админ игроков смотрит актуальное опубликованное расписание работников."""
+    """Read-only просмотр актуального опубликованного расписания работников."""
     if not _is_admin_player(msg):
         return
 
@@ -256,7 +255,6 @@ async def admin_view_worker_schedule(msg: Message):
         await msg.answer("Пока нет опубликованного расписания работников.")
         return
 
-    # Собираем фамилии для подписей в таблице
     all_ids: list[int] = []
     for ws in rows:
         for pid in (
@@ -270,36 +268,40 @@ async def admin_view_worker_schedule(msg: Message):
                 all_ids.append(pid)
     id_to_surname = await get_person_surnames_by_ids(all_ids)
 
-    display_slots = []
+    lines = [f"👷 Расписание работников на {tour_date.strftime('%d.%m.%Y')}", ""]
     for ws in rows:
-        display_slots.append(
-            {
-                "time_slot": ws.time_slot,
-                "operator": id_to_surname.get(ws.operator_id, ""),
-                "camera": id_to_surname.get(ws.director_id, ""),
-                "camera_c": id_to_surname.get(ws.k_center_id, ""),
-                "commentator": id_to_surname.get(ws.commentator_id, ""),
-                "referee": id_to_surname.get(ws.referee_id, ""),
-                "is_break": False,
-            }
-        )
+        lines.append(f"{ws.time_slot}")
+        lines.append(f"  Оператор: {id_to_surname.get(ws.operator_id, '—')}")
+        lines.append(f"  Камера: {id_to_surname.get(ws.director_id, '—')}")
+        lines.append(f"  Ц.Камера: {id_to_surname.get(ws.k_center_id, '—')}")
+        lines.append(f"  Комментатор: {id_to_surname.get(ws.commentator_id, '—')}")
+        lines.append(f"  Судьи: {id_to_surname.get(ws.referee_id, '—')}")
+        lines.append("")
 
-    try:
-        png_bytes = build_worker_schedule_image(tour_date, display_slots)
-        await msg.answer_photo(
-            photo=png_bytes,
-            caption="Актуальное опубликованное расписание работников.",
-        )
-    except Exception as e:
-        await msg.answer(f"⚠️ Ошибка при генерации картинки расписания работников: {e}")
+    text = "\n".join(lines).strip()
+    if len(text) <= 4096:
+        await msg.answer(text)
+        return
+
+    await msg.answer(lines[0])
+    chunk, chunk_len = [], 0
+    for line in lines[2:]:
+        line_len = len(line) + 1
+        if chunk_len + line_len > 3900:
+            await msg.answer("\n".join(chunk))
+            chunk, chunk_len = [], 0
+        chunk.append(line)
+        chunk_len += line_len
+    if chunk:
+        await msg.answer("\n".join(chunk))
 
 
 @router.message(F.from_user.id == bot_settings.admin_players, F.text == "👽 Расписание вратарей")
 async def admin_schedule_stub(msg: Message):
-    """Заглушка раздела расписания вратарей (будет реализовано позже)."""
+    """Read-only заглушка: модуль расписания вратарей пока не реализован."""
     if not _is_admin_player(msg):
         return
-    await msg.answer(STUB_MESSAGE)
+    await msg.answer("Пока нет опубликованного расписания вратарей.")
 
 
 @router.message(F.from_user.id == bot_settings.admin_players, F.text == "💰 Моя зарплата")
